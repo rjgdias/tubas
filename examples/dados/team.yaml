@@ -1,0 +1,32 @@
+# A data team investigating a delivery app's metrics.
+#
+# Run it with:  tubas -team examples/dados
+
+name: dados
+example: "por que os pedidos caíram em março?"
+lead: iris     # answers when nobody else is picked, and closes @todos rounds
+routing: router  # questions with no @: a small model picks who answers (lead | router | all)
+max_hops: 10   # each agent working in parallel counts as one hop
+
+connectors:
+  # Read-only SQL over a synthetic delivery database. "seed: delivery"
+  # creates the example data the first time.
+  data:
+    builtin: sqlite
+    db: data/tubas.db
+    seed: delivery
+
+  # Publishing a markdown report: a write, so it waits for your yes.
+  reports:
+    builtin: reports
+    dir: reports
+    channel: "#dados"
+
+  # Any MCP server works the same way. For example (needs Node.js):
+  #
+  # files:
+  #   command: npx
+  #   args: ["-y", "@modelcontextprotocol/server-filesystem", "./docs"]
+  #   read: [read_text_file, list_directory, search_files]
+  #
+  # Then give an agent access in its file:  tools: { files: read }

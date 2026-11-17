@@ -1,0 +1,12 @@
+# Builds
+*.exe
+/tubas
+
+# What tubas writes while it runs: sessions, conversations, worktrees,
+# panes, routine runs, logs and the background server's token.
+.tubas/
+
+# Generated: example databases (tubas seed) and reports agents published
+*.db
+*.db-*
+examples/*/reports/
