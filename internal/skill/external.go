@@ -42,7 +42,7 @@ func External(teamDir string) []Skill {
 
 	var found []Skill
 	for _, root := range roots {
-		names, _ := subdirs(root)
+		names, _ := linkedSubdirs(root)
 		for _, name := range names {
 			s, err := load(filepath.Join(root, name), false)
 			if err != nil || taken[s.Name] {
@@ -76,6 +76,9 @@ func Import(teamDir, folder string) (Skill, error) {
 	if abs, err := filepath.Abs(folder); err == nil {
 		folder = abs
 	}
+	// The skill folder itself may be a link (a skill manager's install):
+	// read the folder it points to. Links inside it are still refused.
+	folder = linkTarget(folder)
 	data, err := os.ReadFile(filepath.Join(folder, fileName))
 	if err != nil {
 		return Skill{}, fmt.Errorf("%s is not a skill folder: %w", folder, err)
@@ -196,4 +199,59 @@ func readImport(folder string) (map[string][]byte, error) {
 // isText is a cheap check: valid UTF-8 with no NUL bytes.
 func isText(b []byte) bool {
 	return utf8.Valid(b) && !bytes.ContainsRune(b, 0)
+}
+
+// linkedSubdirs are a folder's subfolders, links to folders included:
+// skill managers install a skill in one place and link it into
+// ~/.claude/skills, and Claude Code follows those links.
+func linkedSubdirs(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		isDir := e.IsDir()
+		// A link (on Windows also a junction, which Go reports as
+		// irregular): follow it and see whether it is a folder.
+		if !isDir && e.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			if st, err := os.Stat(filepath.Join(dir, e.Name())); err == nil && st.IsDir() {
+				isDir = true
+			}
+		}
+		if isDir {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// linkTarget is the folder a link (or a Windows junction) points to, so
+// walking it walks the skill; any other path comes back as it is.
+func linkTarget(folder string) string {
+	for range 8 { // a link to a link, a few deep at most
+		st, err := os.Lstat(folder)
+		if err != nil || st.IsDir() {
+			return folder
+		}
+		target, err := os.Readlink(folder)
+		if err != nil {
+			if real, err := filepath.EvalSymlinks(folder); err == nil {
+				return real
+			}
+			return folder
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(folder), target)
+		}
+		folder = target
+	}
+	return folder
 }

@@ -319,6 +319,27 @@ func (m Model) agentFromForm(f *form) (agent.Agent, error) {
 	return a, nil
 }
 
+// editAgent changes one agent's file as it is on disk, not the copy on
+// screen: that one has the team's defaults filled in (workspace access,
+// say), which would end up written in the file.
+func (m Model) editAgent(name string, change func(a *agent.Agent)) error {
+	agents, err := agent.LoadTeam(m.agentsDir())
+	if err != nil {
+		return err
+	}
+	for _, a := range agents {
+		if a.Name == name {
+			if a.Tools == nil {
+				a.Tools = map[string]string{}
+			}
+			change(&a)
+			_, err := agent.Save(m.agentsDir(), a)
+			return err
+		}
+	}
+	return fmt.Errorf("no agent named %s", name)
+}
+
 // saveAgent writes the agent's file and reloads the team.
 func (m Model) saveAgent() Model {
 	f := *m.form
@@ -339,10 +360,13 @@ func (m Model) saveAgent() Model {
 	// Renaming: teammates that called the old name now call the new one.
 	if f.target != "" && f.target != a.Name {
 		for _, other := range m.team {
-			if i := slices.Index(other.CanCall, f.target); i >= 0 {
-				other.CanCall = slices.Clone(other.CanCall)
-				other.CanCall[i] = a.Name
-				agent.Save(m.agentsDir(), other)
+			if slices.Contains(other.CanCall, f.target) {
+				m.editAgent(other.Name, func(o *agent.Agent) {
+					if i := slices.Index(o.CanCall, f.target); i >= 0 {
+						o.CanCall = slices.Clone(o.CanCall)
+						o.CanCall[i] = a.Name
+					}
+				})
 			}
 		}
 	}
@@ -374,7 +398,7 @@ func (m Model) reloadTeam() Model {
 		if _, ok := a.Tools["workspace"]; !ok {
 			a.Tools["workspace"] = "write"
 		}
-		if _, ok := a.Tools["team"]; !ok && a.Name == m.cfg.Lead {
+		if _, ok := a.Tools["team"]; !ok && a.Name == m.cfg.Lead && len(team) > 1 { // as team.Load does
 			a.Tools["team"] = "write"
 		}
 		if _, ok := a.Tools["skills"]; !ok && len(a.Skills) > 0 {

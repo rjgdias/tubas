@@ -43,8 +43,8 @@ func TestLoadErrors(t *testing.T) {
 	}{
 		{"unknown connector", "name: x\n", "  data: read\n", `no connector with that name`},
 		{"unknown builtin", "connectors:\n  data:\n    builtin: excel\n", "  data: read\n", "unknown builtin"},
-		{"neither", "connectors:\n  data:\n    db: x.db\n", "  data: read\n", "needs builtin: or command:"},
-		{"both", "connectors:\n  data:\n    builtin: sqlite\n    command: x\n", "  data: read\n", "not both"},
+		{"neither", "connectors:\n  data:\n    db: x.db\n", "  data: read\n", "needs builtin:, command:, url: or claude:"},
+		{"both", "connectors:\n  data:\n    builtin: sqlite\n    command: x\n", "  data: read\n", "use one of builtin:"},
 		{"sqlite without db", "connectors:\n  data:\n    builtin: sqlite\n", "  data: read\n", "needs db"},
 		{"bad name", "connectors:\n  Data Base:\n    builtin: reports\n", "", "lowercase"},
 		{"bad hops", "max_hops: 99\n", "", "max_hops"},

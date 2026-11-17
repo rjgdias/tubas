@@ -158,6 +158,7 @@ type Model struct {
 	scroll      int          // lines the conversation is scrolled back from the bottom
 	modelPick   *modelPicker // /model, while open
 	gatewayNote string       // why the gateway's models are missing, when they are
+	mcp         *mcpView     // /mcp: the MCP servers, open over the chat
 	// aliases are what your Claude settings make sonnet, opus and haiku
 	// mean; with a gateway that lists its models, only those show.
 	aliases     map[string]string
@@ -406,6 +407,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case mcpProbedMsg:
+		return m.mcpProbed(msg), nil
+
 	case providersMsg:
 		m.providers = msg
 		m.gatewayNote = ""
@@ -493,6 +497,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The model picker (/model) takes every key until it closes.
 	if m.modelPick != nil {
 		return m.modelPickerKey(msg)
+	}
+	// So does the MCP screen (/mcp).
+	if m.mcp != nil {
+		return m.mcpKey(key)
 	}
 
 	// A terminal pane has the keys: everything goes to it but ctrl+b
@@ -610,7 +618,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "tab", "enter":
 			if c := m.commandCandidates(); len(c) > 0 {
-				return m.runCommand(c[min(m.popupIdx, len(c)-1)].Name)
+				return m.pickCommand(m.popupIdx)
 			}
 			return m.complete(), nil
 		case "esc":
@@ -727,8 +735,8 @@ func (m Model) send() (Model, tea.Cmd) {
 		return m, nil
 	}
 	if text := strings.TrimSpace(string(m.input)); strings.HasPrefix(text, "/") {
-		name, _, _ := strings.Cut(text[1:], " ")
-		return m.runCommand(name)
+		name, arg, _ := strings.Cut(text[1:], " ")
+		return m.runCommand(name, strings.TrimSpace(arg))
 	}
 	r, err := m.parseAsk(string(m.input))
 	if err != nil {

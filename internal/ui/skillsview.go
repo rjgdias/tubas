@@ -226,13 +226,13 @@ func (m Model) saveSkillFor(s skill.Skill, who []string) (Model, error) {
 		if has == want {
 			continue
 		}
-		a.Skills = slices.Clone(a.Skills)
-		if want {
-			a.Skills = append(a.Skills, s.Name)
-		} else {
-			a.Skills = slices.DeleteFunc(a.Skills, func(n string) bool { return n == s.Name })
-		}
-		if _, err := agent.Save(m.agentsDir(), a); err != nil {
+		err := m.editAgent(a.Name, func(a *agent.Agent) {
+			a.Skills = slices.DeleteFunc(slices.Clone(a.Skills), func(n string) bool { return n == s.Name })
+			if want {
+				a.Skills = append(a.Skills, s.Name)
+			}
+		})
+		if err != nil {
 			return m, err
 		}
 	}

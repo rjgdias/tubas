@@ -25,6 +25,7 @@ type client struct {
 	stdout *bufio.Reader
 	mu     sync.Mutex // one request at a time
 	nextID int
+	http   *httpConn // set for a server over HTTP: no process then
 }
 
 type message struct {
@@ -34,8 +35,18 @@ type message struct {
 	Error  *rpcError       `json:"error,omitempty"`
 }
 
-// startClient starts the connector's command and does the MCP handshake.
+// startClient starts the connector's command (or reaches its URL) and
+// does the MCP handshake. A connector from Claude Code is read from there
+// first.
 func startClient(c team.Connector, dir string) (*client, error) {
+	c, err := c.Resolved(dir)
+	if err != nil {
+		return nil, err
+	}
+	if c.URL != "" {
+		cl := &client{name: c.Name, http: newHTTPConn(c)}
+		return cl, cl.handshake()
+	}
 	cmd := exec.Command(c.Command, c.Args...)
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
@@ -55,21 +66,32 @@ func startClient(c team.Connector, dir string) (*client, error) {
 		return nil, fmt.Errorf("starting %s: %w", c.Command, err)
 	}
 	cl := &client{name: c.Name, cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}
+	if err := cl.handshake(); err != nil {
+		return nil, err
+	}
+	return cl, nil
+}
 
-	_, err = cl.request("initialize", map[string]any{
-		"protocolVersion": "2025-06-18",
+const protocolVersion = "2025-06-18"
+
+func (cl *client) handshake() error {
+	_, err := cl.request("initialize", map[string]any{
+		"protocolVersion": protocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "tubas", "version": "0.2.0"},
 	})
 	if err != nil {
 		cl.close()
-		return nil, fmt.Errorf("handshake with %s: %w", c.Name, err)
+		return fmt.Errorf("handshake with %s: %w", cl.name, err)
+	}
+	if cl.http != nil {
+		cl.http.proto = protocolVersion
 	}
 	if err := cl.write(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}); err != nil {
 		cl.close()
-		return nil, err
+		return err
 	}
-	return cl, nil
+	return nil
 }
 
 // request sends one request and waits for its answer. Messages the server
@@ -79,6 +101,9 @@ func (cl *client) request(method string, params any) (json.RawMessage, error) {
 	defer cl.mu.Unlock()
 	cl.nextID++
 	id := strconv.Itoa(cl.nextID)
+	if cl.http != nil {
+		return cl.http.call(map[string]any{"jsonrpc": "2.0", "id": cl.nextID, "method": method, "params": params}, id)
+	}
 	if err := cl.write(map[string]any{"jsonrpc": "2.0", "id": cl.nextID, "method": method, "params": params}); err != nil {
 		return nil, err
 	}
@@ -120,6 +145,10 @@ func (cl *client) answerServer(msg message) {
 }
 
 func (cl *client) write(v any) error {
+	if cl.http != nil {
+		_, err := cl.http.call(v, "") // a notification: no answer to wait for
+		return err
+	}
 	line, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -187,6 +216,9 @@ func (cl *client) tools(c team.Connector) ([]tool, error) {
 
 // close stops the server: close its stdin, give it a moment, then kill.
 func (cl *client) close() {
+	if cl.http != nil {
+		return
+	}
 	cl.stdin.Close()
 	done := make(chan struct{})
 	go func() { cl.cmd.Wait(); close(done) }()
@@ -195,4 +227,16 @@ func (cl *client) close() {
 	case <-time.After(2 * time.Second):
 		cl.cmd.Process.Kill()
 	}
+}
+
+// Probe starts a connector's server, lists its tools and stops it: the
+// tool count, or why it did not work. For the /mcp screen.
+func Probe(c team.Connector, dir string) (int, error) {
+	cl, err := startClient(c, dir)
+	if err != nil {
+		return 0, err
+	}
+	defer cl.close()
+	tools, err := cl.tools(c)
+	return len(tools), err
 }

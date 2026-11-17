@@ -10,60 +10,12 @@ import (
 	"tubas/internal/engine"
 )
 
-// ── commands and the model picker ───────────────────────────────────────
+// ── the model picker ────────────────────────────────────────────────────
 //
-// Type / in the chat for the commands: /model changes the model, /new
-// starts a new conversation, /agents adds a teammate, /help shows the
-// keys. /model (or ctrl+o) lists every model the agent can use: Claude's
+// /model (or ctrl+o) lists every model the agent can use: Claude's
 // short names, your company gateway's own (from its /v1/models), the
 // provider's; type to filter, enter to pick. The choice is saved in the
 // agent's file and used from the next message.
-
-var slashCommands = []agent.Agent{
-	{Name: "model", Role: "change the model"},
-	{Name: "new", Role: "start a new conversation"},
-	{Name: "agents", Role: "add a teammate (then they work together)"},
-	{Name: "help", Role: "keys and commands"},
-}
-
-// commandCandidates are the commands matching what you typed after /.
-func (m Model) commandCandidates() []agent.Agent {
-	s := string(m.input)
-	if !strings.HasPrefix(s, "/") || strings.ContainsRune(s, ' ') {
-		return nil
-	}
-	var out []agent.Agent
-	for _, c := range slashCommands {
-		if strings.HasPrefix(c.Name, s[1:]) {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-// runCommand does what a /command says.
-func (m Model) runCommand(name string) (Model, tea.Cmd) {
-	m.input, m.popupIdx = nil, 0
-	switch name {
-	case "model":
-		return m.openModelPicker(), nil
-	case "new":
-		if m.running {
-			m.notice = badStyle.Render("an answer is still coming · esc stops it")
-			return m, nil
-		}
-		return m.newSession(), nil
-	case "agents":
-		m.section = SecAgents
-		m.form = m.agentForm(agent.Agent{}, "analyst")
-		return m, nil
-	case "help":
-		m.showHelp = true
-		return m, nil
-	}
-	m.notice = badStyle.Render("no command /" + name + " · type / to see them")
-	return m, nil
-}
 
 type modelPicker struct {
 	agent  string
@@ -170,9 +122,7 @@ func (m Model) setModel(name, model string) Model {
 	if a == nil || m.cfg.TeamDir == "" {
 		return m
 	}
-	changed := *a
-	changed.Model = model
-	if _, err := agent.Save(m.agentsDir(), changed); err != nil {
+	if err := m.editAgent(name, func(a *agent.Agent) { a.Model = model }); err != nil {
 		m.notice = badStyle.Render("could not save: " + err.Error())
 		return m
 	}

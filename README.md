@@ -79,7 +79,7 @@ my-team/
   routines.yaml   agents on a schedule (optional)
 ```
 
-`team.yaml` says where tools come from. A **connector** is built into tubas, a git repository, or any [MCP](https://modelcontextprotocol.io) server that speaks stdio:
+`team.yaml` says where tools come from. A **connector** is built into tubas, a git repository, or any [MCP](https://modelcontextprotocol.io) server, over stdio or HTTP. The easy way is `/mcp` in the chat: it lists the MCP servers your Claude Code already has (yours, the project's, `.mcp.json`) and adds one with `enter`, as `claude: NAME`, so tubas reads it from Claude Code each time and its tokens stay there. By hand:
 
 ```yaml
 name: support
@@ -105,6 +105,11 @@ connectors:
     env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}" }
     read: [search_issues, get_issue]   # optional: treat these as read-only
     write: [merge_pull_request]        # optional: treat these as writes
+  docs:                     # an MCP server over HTTP (streamable HTTP)
+    url: https://mcp.example.com/mcp
+    headers: { Authorization: "Bearer ${DOCS_TOKEN}" }
+  playwright:               # one of your Claude Code MCP servers, by name
+    claude: playwright
 ```
 
 Each agent file gives the agent an access level per connector:
@@ -210,6 +215,28 @@ Seven sections, always in the top bar: **chat · inbox · agents · routines · 
 | settings | routing, lead, hops, notifications, the AI providers found on this computer, quiet hours, retries. `e` edit, `r` look for AI again |
 
 Every change is a form: `↑↓` moves, `←→` picks an option, letters type, `enter` on a long text (instructions, a routine's prompt, a skill) opens your `$EDITOR`, `ctrl+s` saves, `esc` cancels. Each form says which file it writes.
+
+### Commands
+
+Type `/` in the chat: every command, with what it does, filtered as you type (by name, alias or description). `enter` runs it.
+
+| Command | What it does |
+| --- | --- |
+| `/new` (`/clear`) | a new conversation; the one on screen keeps running |
+| `/conversations` (`/resume`) | your conversations, with their state (`ctrl+g`) |
+| `/retry` · `/stop` | ask the last question again · stop the answer that is coming |
+| `/copy` | copy the last answer |
+| `/export [file]` | save the conversation as Markdown, in the folder you are in |
+| `/model [name]` | pick the model from a list (your gateway's too), or set it at once: `/model haiku` |
+| `/usage` | tokens and cost of the conversation |
+| `/doctor` | `tubas doctor` in a terminal next to the chat |
+| `/mcp` | MCP servers: the team's (enter tests one: does it start, how many tools), and yours from Claude Code to add with `enter`; `d` removes |
+| `/skills` | the skills, the team's and your Claude Code ones |
+| `/<skill> [what for]` | every skill is a command: `/pdf summarize report.pdf` asks the assistant to follow it (a Claude Code skill is copied into the team first) |
+| `/agents` | add a teammate |
+| `/inbox` · `/routines` · `/files` · `/settings` | open that screen |
+| `/terminal` | a terminal next to the chat (`ctrl+b v`) |
+| `/help` · `/quit` (`/exit`) | keys and commands · close the window (everything keeps running) |
 
 ### Keys in the chat
 
@@ -385,7 +412,7 @@ Routines run in the background server, with the window open or not. Each run is 
 
 ### Skills: agents learn from repeated work
 
-When an agent does the same work (the same tools, in the same order) successfully 3 times, tubas drafts a skill from what the agent did, never from the text tools returned, and suggests it in the inbox: `y` saves it for that agent, `t` for the whole team, `e` edits it, `n` not now, `x` never. Skills live in `.tubas/skills/<name>/SKILL.md` (the Agent Skills format). An agent's prompt only carries each skill's name and when to use it; the steps load when the agent calls `load_skill`. In agents › skills (`s`) you edit them, give them to agents, archive and restore them, and add the ones already in `~/.claude/skills` (`a`).
+When an agent does the same work (the same tools, in the same order) successfully 3 times, tubas drafts a skill from what the agent did, never from the text tools returned, and suggests it in the inbox: `y` saves it for that agent, `t` for the whole team, `e` edits it, `n` not now, `x` never. Skills live in `.tubas/skills/<name>/SKILL.md` (the Agent Skills format). An agent's prompt only carries each skill's name and when to use it; the steps load when the agent calls `load_skill`. In agents › skills (`s`) you edit them, give them to agents, archive and restore them, and add the ones already in `~/.claude/skills` (`a`), links to skill folders included (skill managers install that way). Or skip all that: every skill is a `/` command, and `/<skill>` brings a Claude Code one in when you first use it.
 
 ## Tokens
 

@@ -61,3 +61,39 @@ func TestAFailingProviderShowsOnScreen(t *testing.T) {
 		}
 	}
 }
+
+func TestTheCommandMenu(t *testing.T) {
+	m, _, _ := remoteModel(t, nil)
+	m = feed(m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	t.Cleanup(m.Stop)
+	m = m.PressKeys("/")
+	names := map[string]bool{}
+	for _, c := range m.commandCandidates() {
+		names[c.Name] = true
+	}
+	for _, want := range []string{"new", "conversations", "retry", "copy", "export", "model", "usage", "doctor", "mcp", "skills", "help", "quit"} {
+		if !names[want] {
+			t.Errorf("/ lists /%s", want)
+		}
+	}
+	frame := ansi.Strip(m.Snapshot(120, 40))
+	if !strings.Contains(frame, "↓") || !strings.Contains(frame, "more") {
+		t.Errorf("a long list scrolls, with a count of what is below:\n%s", frame)
+	}
+	// Aliases and words in the description find a command too.
+	m = m.PressKeys("backspace", "/", "c", "l", "e")
+	if c := m.commandCandidates(); len(c) == 0 || c[0].Name != "new" {
+		t.Errorf("/cle finds /new by its alias /clear: %v", c)
+	}
+	// /model with a name sets it at once.
+	m = m.PressKeys("ctrl+u", "/model haiku", "enter")
+	if a := m.agentByName(m.pickerAgent()); a == nil || a.Model != "haiku" || m.modelPick != nil {
+		t.Errorf("/model haiku sets the model without the picker: %+v", a)
+	}
+	// /export writes the conversation as Markdown.
+	m.cfg.WorkDir = t.TempDir()
+	m = m.export("")
+	if !strings.Contains(m.notice, "nothing to export") {
+		t.Errorf("an empty conversation has nothing to export: %q", m.notice)
+	}
+}

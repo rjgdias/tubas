@@ -168,7 +168,15 @@ func TestSessionsSurviveARestart(t *testing.T) {
 	s, c, dir := testServer(t, map[string]engine.Script{"leo": {Summary: "feito"}})
 	info, _ := c.Start(StartRequest{Target: "leo", Question: "faz"})
 	c.Wait(info.ID, []string{Done}, 5*time.Second)
-	time.Sleep(50 * time.Millisecond) // save runs right after the last event
+	// The session is saved right after its last event: wait for the file
+	// (a fixed pause was flaky with the other tests running).
+	for i := 0; i < 200; i++ {
+		if files, _ := filepath.Glob(filepath.Join(dir, ".tubas", "sessions", "*.json")); len(files) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond) // and for it to be written whole
 	s.Stop()
 
 	again := New(Options{TeamDir: dir, Engine: engine.FakeEngine{}, Load: func() (team.Team, error) { return team.Load(dir) }})

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -45,6 +46,15 @@ type Connector struct {
 	Args    []string          `yaml:"args"`
 	Env     map[string]string `yaml:"env"` // ${VAR} is replaced from your environment
 
+	// Or one over HTTP (MCP's streamable HTTP).
+	URL     string            `yaml:"url"`
+	Headers map[string]string `yaml:"headers"` // ${VAR} is replaced from your environment
+
+	// Or one from your Claude Code settings, by name: tubas reads it from
+	// there each time, so its tokens stay in Claude Code's file.
+	Claude     string `yaml:"claude"`
+	ClaudeFrom string `yaml:"claude_from"` // the project folder it came from, when not your own settings
+
 	// Override how tools are classified. By default a tool is read-only
 	// when the server marks it so (readOnlyHint); every other tool writes
 	// and waits for your approval.
@@ -61,6 +71,20 @@ func (c Connector) Kind() string {
 		return "repo"
 	}
 	return "mcp"
+}
+
+// Runs says what runs an MCP connector, for screens: the command, the
+// URL, or "claude: playwright".
+func (c Connector) Runs() string {
+	switch {
+	case c.Claude != "":
+		return "from Claude Code: " + c.Claude
+	case c.URL != "":
+		return c.URL
+	case c.Command != "":
+		return strings.TrimSpace(c.Command + " " + strings.Join(c.Args, " "))
+	}
+	return c.Builtin
 }
 
 // ProviderConfig is a model provider from team.yaml.
@@ -200,9 +224,15 @@ func checkConnector(c Connector) error {
 	if !validName.MatchString(c.Name) {
 		return errors.New("use lowercase letters, digits, - or _ in the name")
 	}
+	sources := 0
+	for _, set := range []bool{c.Builtin != "", c.Command != "", c.URL != "", c.Claude != "", c.Repo != ""} {
+		if set {
+			sources++
+		}
+	}
 	switch {
-	case c.Builtin != "" && c.Command != "":
-		return errors.New("use either builtin or command, not both")
+	case sources > 1:
+		return errors.New("use one of builtin:, command:, url:, claude: or repo:")
 	case c.Repo != "":
 		if c.Builtin != "" || c.Command != "" {
 			return errors.New("a repo connector has only repo:, base: and setup:")
@@ -217,8 +247,8 @@ func checkConnector(c Connector) error {
 	case c.Builtin == "reports", c.Builtin == "workspace", c.Builtin == "team", c.Builtin == "skills":
 	case c.Builtin != "":
 		return fmt.Errorf("unknown builtin %q (use sqlite, reports or workspace)", c.Builtin)
-	case c.Command == "":
-		return errors.New("needs builtin: or command:")
+	case c.Command == "" && c.URL == "" && c.Claude == "":
+		return errors.New("needs builtin:, command:, url: or claude:")
 	}
 	return nil
 }

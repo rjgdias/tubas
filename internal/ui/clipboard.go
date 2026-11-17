@@ -35,7 +35,15 @@ func systemClipboard(text string) error {
 	var input []byte
 	switch runtime.GOOS {
 	case "windows":
-		// clip.exe reads UTF-16 when the text starts with a byte order mark.
+		// Set-Clipboard takes the text as it is. (clip.exe needs a byte
+		// order mark to read accents, and then puts that mark on the
+		// clipboard too: an invisible character in front of every paste.)
+		script := "[Console]::InputEncoding = [Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"
+		cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+		input = []byte(strings.ReplaceAll(text, "\n", "\r\n"))
+		if err := runClipboard(cmd, input); err == nil {
+			return nil
+		}
 		u := utf16.Encode([]rune(strings.ReplaceAll(text, "\n", "\r\n")))
 		var b bytes.Buffer
 		b.Write([]byte{0xFF, 0xFE})
@@ -54,6 +62,11 @@ func systemClipboard(text string) error {
 			return errors.New("no clipboard tool (wl-copy, xclip or xsel)")
 		}
 	}
+	return runClipboard(cmd, input)
+}
+
+func runClipboard(cmd *exec.Cmd, input []byte) error {
 	cmd.Stdin = bytes.NewReader(input)
+	hideWindow(cmd)
 	return cmd.Run()
 }

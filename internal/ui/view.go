@@ -60,6 +60,8 @@ func (m Model) screen(cw int) []string {
 	switch {
 	case m.modelPick != nil:
 		body = m.viewModelPicker(cw, bodyH)
+	case m.mcp != nil:
+		body = m.viewMCP(cw, bodyH)
 	case m.picker:
 		body = m.viewPicker(cw, bodyH)
 	case m.review:
@@ -675,25 +677,47 @@ func (m Model) viewPopup() []string {
 	if !m.popupOpen() {
 		return nil
 	}
-	c := m.candidates()
-	if len(c) > 5 {
-		c = c[:5]
+	all := m.candidates()
+	idx := min(m.popupIdx, len(all)-1)
+	// Up to 8 rows, scrolling with the selection.
+	const rows = 8
+	start := 0
+	if idx >= rows {
+		start = idx - rows + 1
 	}
-	idx := min(m.popupIdx, len(c)-1)
+	c := all[start:min(len(all), start+rows)]
 	edge := faintStyle.Render("│ ")
+	commands := strings.HasPrefix(string(m.input), "/")
 	title := "mention an agent"
-	if strings.HasPrefix(string(m.input), "/") {
-		title = "commands"
+	nameW := 8
+	if commands {
+		title = fmt.Sprintf("commands · %d", len(all))
+		nameW = 14
+		for _, a := range c {
+			nameW = max(nameW, min(26, len(a.Name)+2))
+		}
 	}
+	cw := m.width - 2
 	lines := []string{edge + dimStyle.Render(title)}
 	for i, a := range c {
-		if i == idx {
-			lines = append(lines, edge+barBold.Render(fmt.Sprintf(" %-8s", a.Name))+
-				barStyle.Render(fmt.Sprintf("%-22s enter ", a.Role)))
-		} else {
-			lines = append(lines, edge+" "+m.agentStyle(a.Name).Render(fmt.Sprintf("%-8s", a.Name))+
-				dimStyle.Render(a.Role))
+		name := a.Name
+		if commands {
+			name = "/" + a.Name
 		}
+		name = fmt.Sprintf("%-*s", nameW, fit(name, nameW-1))
+		role := fit(a.Role, max(10, cw-nameW-12))
+		if start+i == idx {
+			lines = append(lines, edge+barBold.Render(" "+name)+barStyle.Render(" "+role+" ")+dimStyle.Render(" enter"))
+		} else {
+			style := m.agentStyle(a.Name)
+			if commands {
+				style = hiStyle
+			}
+			lines = append(lines, edge+" "+style.Render(name)+" "+dimStyle.Render(role))
+		}
+	}
+	if more := len(all) - (start + len(c)); more > 0 {
+		lines = append(lines, edge+faintStyle.Render(fmt.Sprintf(" ↓ %d more · keep typing to filter", more)))
 	}
 	return lines
 }
@@ -851,12 +875,19 @@ func (m Model) gridPane(i int, name, role string, w, h int) []string {
 // lines behind, paint them faint, and splice the panel into the middle.
 func (m Model) withHelp(base []string, cw int) []string {
 	group := func(s string) string { return dimStyle.Render(fmt.Sprintf("%-10s", s)) }
-	key := func(s string) string { return hiStyle.Render(fmt.Sprintf("%-14s", s)) }
+	key := func(s string) string { return hiStyle.Render(fmt.Sprintf("%-16s", s)) }
 	rows := [][3]string{
-		{"talk", "text", "ask the lead"},
+		{"talk", "text", "ask"},
 		{"", "@agent", "pick who answers, anywhere in the text"},
 		{"", "tab", "complete the @name"},
-		{"", "esc", "stop the agents"},
+		{"", "esc", "stop the answer"},
+		{},
+		{"commands", "/", "every command, filtered as you type"},
+		{"", "/new /retry", "new conversation · ask again"},
+		{"", "/copy /export", "copy the answer · save as Markdown"},
+		{"", "/model /usage", "change the model · what it cost"},
+		{"", "/mcp /skills", "tools · skills (/name runs a skill)"},
+		{"", "/doctor", "check how agents reach a model"},
 		{},
 		{"decide", "y  n", "approve · deny"},
 		{"", "v", "see the full call"},
@@ -877,7 +908,7 @@ func (m Model) withHelp(base []string, cw int) []string {
 		{"", " ", "connectors · files · settings"},
 		{"", "esc", "back to the chat, from a section"},
 	}
-	pw := min(cw-4, 64)
+	pw := min(cw-4, 76)
 	inner := pw - 6 // border (2) + padding (4)
 	lines := []string{spread(boldStyle.Render("keys"), dimStyle.Render("esc close"), inner), ""}
 	for _, r := range rows {

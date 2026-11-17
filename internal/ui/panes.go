@@ -666,6 +666,12 @@ func (m Model) savePane() (Model, tea.Cmd) {
 		r := m.cfg.Repos[name]
 		spec.Repo, spec.Dir, spec.Base, spec.Setup, spec.Worktree = name, r.Path, r.Base, r.Setup, true
 	}
+	return m.openPane(spec, dir)
+}
+
+// openPane opens a pane next to the one in focus ("right", "down" or
+// "tab"), running spec.
+func (m Model) openPane(spec pane.Spec, dir string) (Model, tea.Cmd) {
 	ps := m.panes
 	target := ps.focus()
 	a := m.areaIn(m.width-2, m.bodyHeight())
