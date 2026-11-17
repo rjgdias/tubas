@@ -187,7 +187,7 @@ func (m Model) modelsFor(harness, provider, current string) []string {
 	var models []string
 	switch {
 	case (harness == "claude" || harness == "") && (provider == "anthropic" || provider == ""):
-		models = slices.Clone(modelNames)
+		models = append(slices.Clone(modelNames), m.cfg.Providers["anthropic"]...) // and your gateway's own
 	case harness == "claude" || harness == "api":
 		models = append([]string{""}, m.cfg.Providers[provider]...)
 	default: // codex and ACP agents choose in their own settings

@@ -91,10 +91,13 @@ func workSetup(t *testing.T) (project string) {
 func TestFindProviderReadsTheGateway(t *testing.T) {
 	p := FindProvider(workSetup(t))
 
+	// The whole env block comes through, as tucano does: a company setup
+	// may need variables of its own.
 	want := map[string]string{
 		"ANTHROPIC_BASE_URL":   "https://llm.acme.internal/claude",
 		"ANTHROPIC_AUTH_TOKEN": "project-token", // the local file wins
 		"NODE_EXTRA_CA_CERTS":  "/etc/acme-ca.pem",
+		"SOME_OTHER_SETTING":   "stays out",
 	}
 	if len(p.Env) != len(want) {
 		t.Fatalf("env = %v, want %v", p.Env, want)
@@ -116,7 +119,7 @@ func TestFindProviderWithoutSettings(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 	p := FindProvider(t.TempDir())
-	if len(p.Env) != 0 || p.Label() != "" || p.Environ() != nil {
+	if len(p.Env) != 0 || p.Label() != "" || p.KeyHelper != "" {
 		t.Errorf("no settings should mean no provider: %+v", p)
 	}
 }
@@ -177,7 +180,7 @@ func TestAgentTurnReachesTheGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "base=https://llm.acme.internal/claude token=project-token other="
+	want := "base=https://llm.acme.internal/claude token=project-token other=stays out"
 	if reply.Text != want {
 		t.Errorf("claude saw %q, want %q", reply.Text, want)
 	}

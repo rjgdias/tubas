@@ -102,11 +102,8 @@ func (r ClaudeRouter) Route(ctx context.Context, question, earlier string, candi
 		"--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands",
 		"--no-session-persistence")
 	cmd.Dir = r.WorkDir
-	provider, err := r.Provider.Resolved()
-	if err != nil {
-		return RouteDecision{}, err
-	}
-	cmd.Env = provider.Environ()
+	cmd.Args = append(cmd.Args, r.Provider.SettingsArgs()...)
+	cmd.Env = r.Provider.Environ()
 	cmd.Stdin = strings.NewReader(in.String())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

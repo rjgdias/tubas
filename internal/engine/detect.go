@@ -22,10 +22,11 @@ import (
 // Detected is one way to reach a model that tubas found (or, for Claude
 // Code, did not find).
 type Detected struct {
-	Name   string // "claude", "gateway", "codex", "openrouter", "openai", "anthropic-key", "gemini", "ollama"
-	Ready  bool   // can be used now
-	Detail string // one line for people, e.g. "Claude Code 2.1.140 · signed in with a Claude Max plan"
-	Usable bool   // tubas can run agents with it
+	Name   string   // "claude", "gateway", "codex", "openrouter", "openai", "anthropic-key", "gemini", "ollama"
+	Ready  bool     // can be used now
+	Detail string   // one line for people, e.g. "Claude Code 2.1.140 · signed in with a Claude Max plan"
+	Usable bool     // tubas can run agents with it
+	Models []string // the models it serves, when it says (a gateway's /v1/models)
 }
 
 // The outside world, as variables so tests can stand in for it.
@@ -38,8 +39,9 @@ var (
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	lookPath  = exec.LookPath
-	ollamaURL = "http://127.0.0.1:11434"
+	lookPath      = exec.LookPath
+	ollamaURL     = "http://127.0.0.1:11434"
+	gatewayModels = GatewayModels
 )
 
 const (
@@ -65,6 +67,12 @@ func DetectProviders(ctx context.Context, workDir string) []Detected {
 	// The quick ones run here while the commands start.
 	gateway := detectGateway(provider)
 	keys := detectKeys(provider)
+	if gateway != nil {
+		if models := gatewayModels(ctx, provider); len(models) > 0 {
+			gateway.Models = models
+			gateway.Detail += fmt.Sprintf(" · %d models", len(models))
+		}
+	}
 	wg.Wait()
 
 	var found []Detected

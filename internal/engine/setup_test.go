@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"tubas/internal/agent"
@@ -67,5 +68,62 @@ func TestAPIHarnessGoesThroughYourClaudeSetup(t *testing.T) {
 	if reply.Text != "ok via acme" || got.path != "/anthropic/v1/messages" || got.auth != "Bearer helper-token-2" ||
 		got.team != "dados" || got.model != "acme-sonnet" {
 		t.Errorf("reply %q, request %+v", reply.Text, got)
+	}
+}
+
+// Agents get your setup, not the Claude Code session tubas may run inside;
+// behind a gateway, claude's telemetry is off; your key helper goes to
+// claude, which runs it (and runs it again on a 401).
+func TestClaudeGetsACleanQuietEnvironment(t *testing.T) {
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "host-session")
+	t.Setenv("CLAUDE_CODE_GIT_BASH_PATH", "C:/git/bash.exe")
+	p := Provider{Env: map[string]string{"ANTHROPIC_BASE_URL": "https://acme.example.com"}, KeyHelper: "get-token --team dados"}
+	env := strings.Join(p.Environ(), "\n")
+	for _, gone := range []string{"CLAUDECODE=", "CLAUDE_CODE_SESSION_ID="} {
+		if strings.Contains(env, gone) {
+			t.Errorf("%s belongs to the host session, not the agent", gone)
+		}
+	}
+	for _, kept := range []string{"CLAUDE_CODE_GIT_BASH_PATH=C:/git/bash.exe", "DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "ANTHROPIC_BASE_URL=https://acme.example.com"} {
+		if !strings.Contains(env, kept) {
+			t.Errorf("missing %s", kept)
+		}
+	}
+	if got := strings.Join(p.SettingsArgs(), " "); got != `--settings {"apiKeyHelper":"get-token --team dados"}` {
+		t.Errorf("settings args = %s", got)
+	}
+}
+
+// The gateway says which models it serves; the agent form offers them.
+func TestGatewayModels(t *testing.T) {
+	var auth, version string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth, version = r.Header.Get("Authorization"), r.Header.Get("anthropic-version")
+		if r.URL.Path != "/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"id":"acme-sonnet"},{"id":"acme-haiku"},{"id":"acme-sonnet"}]}`)
+	}))
+	defer srv.Close()
+	p := Provider{Env: map[string]string{"ANTHROPIC_BASE_URL": srv.URL + "/", "ANTHROPIC_AUTH_TOKEN": "tok"}}
+	got := strings.Join(GatewayModels(context.Background(), p), ",")
+	if got != "acme-haiku,acme-sonnet" || auth != "Bearer tok" || version == "" {
+		t.Errorf("models %q, auth %q, version %q", got, auth, version)
+	}
+	if GatewayModels(context.Background(), Provider{}) != nil {
+		t.Error("no gateway, no models")
+	}
+}
+
+func TestFunctionNames(t *testing.T) {
+	if got := functionName("github__search.issues"); got != "github__search_issues" {
+		t.Errorf("got %q", got)
+	}
+	long := functionName(strings.Repeat("x", 80))
+	if len(long) != 64 || long == functionName(strings.Repeat("x", 81)) {
+		t.Errorf("a long name is cut with a hash that keeps it unique: %q", long)
 	}
 }

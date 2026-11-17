@@ -30,6 +30,7 @@ import (
 )
 
 func main() {
+	engine.AdoptPath() // agent CLIs where installers put them, and your login shell's PATH
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "mcp":

@@ -131,7 +131,9 @@ func runSenior(ctx context.Context, model, prompt string) (string, float64, erro
 	wd, _ := os.Getwd()
 	cmd := exec.CommandContext(ctx, command, "-p", "--output-format", "json", "--model", model,
 		"--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands", "--no-session-persistence")
-	cmd.Env = engine.FindProvider(wd).Environ()
+	provider := engine.FindProvider(wd)
+	cmd.Args = append(cmd.Args, provider.SettingsArgs()...)
+	cmd.Env = provider.Environ()
 	cmd.Stdin = strings.NewReader(prompt)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

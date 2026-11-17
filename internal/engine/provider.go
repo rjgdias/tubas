@@ -69,17 +69,27 @@ func (p Provider) Label() string {
 
 // Environ is the environment for a claude process: this process's own,
 // with the provider's variables on top (your settings win, as they do
-// when you run claude yourself).
+// when you run claude yourself). Two things more, as tucano does:
+//
+//   - what marks this process as running inside a Claude Code session
+//     (the desktop app, say) stays out: it would make the agent use that
+//     session's login instead of your provider;
+//   - behind a gateway, Claude Code's own telemetry and error reports are
+//     off: company gateways often block them, and the turn would wait.
 func (p Provider) Environ() []string {
-	if len(p.Env) == 0 {
-		return nil // nil means: inherit this process's environment
+	quiet := map[string]string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+	if p.Get("ANTHROPIC_BASE_URL") != "" {
+		quiet["DISABLE_TELEMETRY"], quiet["DISABLE_ERROR_REPORTING"] = "1", "1"
 	}
-	env := make([]string, 0, len(os.Environ())+len(p.Env))
+	env := make([]string, 0, len(os.Environ())+len(p.Env)+len(quiet))
+	set := map[string]bool{}
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if _, replaced := p.Env[k]; !replaced {
-			env = append(env, kv)
+		if _, replaced := p.Env[k]; replaced || hostSessionVar(k) {
+			continue
 		}
+		env = append(env, kv)
+		set[strings.ToUpper(k)] = true
 	}
 	keys := make([]string, 0, len(p.Env))
 	for k := range p.Env {
@@ -91,8 +101,48 @@ func (p Provider) Environ() []string {
 			continue // an empty value removes the variable
 		}
 		env = append(env, k+"="+p.Env[k])
+		set[strings.ToUpper(k)] = true
+	}
+	for k, v := range quiet {
+		if !set[k] { // yours win
+			env = append(env, k+"="+v)
+		}
 	}
 	return env
+}
+
+// hostSessionVar says whether a variable belongs to a Claude Code session
+// this process runs inside (ids, sockets, tokens, the entry point), not to
+// your setup. Your own CLAUDE_CODE_ settings (USE_BEDROCK, SKIP_*, client
+// certificates, timeouts…) are kept.
+func hostSessionVar(name string) bool {
+	upper := strings.ToUpper(name)
+	switch {
+	case upper == "CLAUDECODE", upper == "CLAUDE_PID", upper == "CLAUDE_EFFORT",
+		strings.HasPrefix(upper, "CLAUDE_AGENT_SDK_"), strings.HasPrefix(upper, "CLAUDE_PREVIEW_"):
+		return true
+	case strings.HasPrefix(upper, "CLAUDE_CODE_"):
+		for _, keep := range []string{"CLAUDE_CODE_USE_", "CLAUDE_CODE_SKIP_", "CLAUDE_CODE_CLIENT_", "CLAUDE_CODE_GIT_BASH_PATH",
+			"CLAUDE_CODE_API_KEY_HELPER_TTL_MS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_DISABLE_", "CLAUDE_CODE_TMPDIR"} {
+			if strings.HasPrefix(upper, keep) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// SettingsArgs gives claude your apiKeyHelper, as tucano does: claude
+// runs it, sends the key, and runs it again when the gateway says 401.
+// (--settings works with --setting-sources "" for this; checked against
+// claude 2.1.303.)
+func (p Provider) SettingsArgs() []string {
+	if p.KeyHelper == "" {
+		return nil
+	}
+	data, _ := json.Marshal(map[string]string{"apiKeyHelper": p.KeyHelper})
+	return []string{"--settings", string(data)}
 }
 
 // With is p with other's variables on top.
@@ -204,14 +254,13 @@ func FindProvider(workDir string) Provider {
 				p.Sources = append(p.Sources, path)
 			}
 		}
-		used := false
+		// The whole env block, as tucano does: a company setup may need
+		// variables of its own (for its key helper, say), not only the
+		// provider's.
 		for k, v := range env {
-			if isProviderVar(k) {
-				p.Env[k] = v
-				used = true
-			}
+			p.Env[k] = v
 		}
-		if used {
+		if len(env) > 0 && (len(p.Sources) == 0 || p.Sources[len(p.Sources)-1] != path) {
 			p.Sources = append(p.Sources, path)
 		}
 	}
@@ -263,31 +312,6 @@ func readSettingsEnv(path string) (map[string]string, string, bool) {
 		}
 	}
 	return env, strings.TrimSpace(s.APIKeyHelper), true
-}
-
-// isProviderVar says whether a variable chooses or reaches the AI
-// provider. Only these leave your settings for the agents.
-func isProviderVar(name string) bool {
-	for _, prefix := range []string{
-		"ANTHROPIC_",        // gateway URL, token, key, headers, model names, vertex/bedrock URLs
-		"CLAUDE_CODE_USE_",  // bedrock, vertex, foundry
-		"CLAUDE_CODE_SKIP_", // skip bedrock/vertex auth behind a gateway
-		"AWS_",              // bedrock region, profile, bearer token
-		"CLOUD_ML_",         // vertex region
-		"VERTEX_REGION_",    // vertex region per model
-	} {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	switch name {
-	case "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-		"NODE_EXTRA_CA_CERTS", // a company CA for the gateway's certificate
-		"CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY", "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
-		"GOOGLE_APPLICATION_CREDENTIALS":
-		return true
-	}
-	return false
 }
 
 func truthy(v string) bool {

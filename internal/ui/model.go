@@ -394,6 +394,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case providersMsg:
 		m.providers = msg
+		for _, d := range msg { // a gateway's own model names, for the agent form
+			if d.Name == "gateway" && len(d.Models) > 0 {
+				if m.cfg.Providers == nil {
+					m.cfg.Providers = map[string][]string{}
+				}
+				m.cfg.Providers["anthropic"] = d.Models
+			}
+		}
 
 	case statusMsg:
 		first := m.status == nil

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -38,8 +39,9 @@ func detectSetup(t *testing.T) *fakeWorld {
 	}
 
 	w := &fakeWorld{installed: map[string]string{}}
-	oldRun, oldLook, oldURL := runCommand, lookPath, ollamaURL
-	t.Cleanup(func() { runCommand, lookPath, ollamaURL = oldRun, oldLook, oldURL })
+	oldRun, oldLook, oldURL, oldModels := runCommand, lookPath, ollamaURL, gatewayModels
+	t.Cleanup(func() { runCommand, lookPath, ollamaURL, gatewayModels = oldRun, oldLook, oldURL, oldModels })
+	gatewayModels = func(context.Context, Provider) []string { return nil }
 
 	runCommand = func(ctx context.Context, env []string, name string, args ...string) (string, error) {
 		w.mu.Lock()
@@ -90,11 +92,13 @@ func TestDetectSignedInWithASubscription(t *testing.T) {
 		t.Fatalf("found %s", names(found))
 	}
 	want := Detected{Name: "claude", Ready: true, Usable: true, Detail: "Claude Code 2.1.140 · signed in with a Claude Max plan"}
-	if found[0] != want {
+	if !reflect.DeepEqual(found[0], want) {
 		t.Fatalf("got %+v", found[0])
 	}
-	if w.claudeEnv != nil {
-		t.Errorf("without a provider claude should inherit the environment, got %d vars", len(w.claudeEnv))
+	for _, kv := range w.claudeEnv {
+		if strings.HasPrefix(kv, "ANTHROPIC_BASE_URL=") && kv != "ANTHROPIC_BASE_URL=" {
+			t.Errorf("without a provider claude gets no gateway: %s", kv)
+		}
 	}
 }
 
@@ -156,7 +160,7 @@ func TestDetectGatewayFromSettings(t *testing.T) {
 		t.Errorf("claude %+v", found[0])
 	}
 	want := Detected{Name: "gateway", Ready: true, Usable: true, Detail: "through llm.acme.internal · from ~/.claude/settings.json"}
-	if found[1] != want {
+	if !reflect.DeepEqual(found[1], want) {
 		t.Errorf("gateway %+v", found[1])
 	}
 	// claude was asked the way agents will run it: with the gateway.
@@ -248,7 +252,7 @@ func TestDetectOllamaNotRunning(t *testing.T) {
 		t.Fatalf("found %s", names(found))
 	}
 	want := Detected{Name: "ollama", Detail: "installed, not running · ollama serve starts it"}
-	if found[1] != want {
+	if !reflect.DeepEqual(found[1], want) {
 		t.Fatalf("got %+v", found[1])
 	}
 }

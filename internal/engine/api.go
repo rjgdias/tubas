@@ -3,6 +3,8 @@ package engine
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -45,7 +48,7 @@ type APIEngine struct {
 	Approvals       *Broker
 	Prices          map[string]Price // by model; a model without one shows tokens, no cost
 	HTTP            *http.Client
-	MaxSteps        int // model calls per turn (0 = 30)
+	MaxSteps        int // model calls per turn (0 = 60, as tucano)
 }
 
 func (e APIEngine) Name() string {
@@ -188,6 +191,14 @@ func (e APIEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- Even
 			gw, tools = conn, list
 		}
 	}
+	// The APIs accept tool names of letters, digits, _ and - (64 at most):
+	// the model sees a clean name, the gateway gets the real one.
+	real := map[string]string{}
+	for i, t := range tools {
+		clean := functionName(t.Name)
+		real[clean] = t.Name
+		tools[i].Name = clean
+	}
 	if e.Approvals != nil {
 		defer e.Approvals.Attach(ctx, turn, out)()
 	}
@@ -210,7 +221,7 @@ func (e APIEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- Even
 	reply.Model = model
 	steps := e.MaxSteps
 	if steps <= 0 {
-		steps = 30
+		steps = 60
 	}
 	price, priced := e.Prices[model]
 	for i := 0; ; i++ {
@@ -241,11 +252,17 @@ func (e APIEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- Even
 		}
 		outputs, failed := make([]string, len(step.Calls)), make([]bool, len(step.Calls))
 		for j, call := range step.Calls {
+			if name, ok := real[call.Name]; ok {
+				call.Name = name
+			}
 			send(ctx, out, ToolCalled{a.Name, describeCall(call.Name, call.Args)})
 			if gw == nil {
 				outputs[j], failed[j] = "no tools are available", true
 			} else {
 				outputs[j], failed[j] = callTool(ctx, gw, call)
+			}
+			if r := []rune(outputs[j]); len(r) > maxToolOutput {
+				outputs[j] = string(r[:maxToolOutput]) + "\n… (cut: the result is longer)"
 			}
 			ev := ToolResult{Agent: a.Name, Text: firstLine(outputs[j]), Failed: failed[j]}
 			if k := strings.Index(outputs[j], "\n↑ "); k >= 0 {
@@ -256,6 +273,22 @@ func (e APIEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- Even
 		chat.results(step.Calls, outputs, failed)
 	}
 }
+
+// maxToolOutput is how much of a tool's result goes back to the model.
+const maxToolOutput = 60000
+
+// functionName makes a tool name the APIs accept, as tucano does:
+// letters, digits, _ and -, at most 64 (a long one keeps a hash).
+func functionName(name string) string {
+	clean := []rune(nonFunctionChars.ReplaceAllString(name, "_"))
+	if len(clean) <= 64 {
+		return string(clean)
+	}
+	sum := sha1.Sum([]byte(name))
+	return string(clean[:55]) + "_" + hex.EncodeToString(sum[:])[:8]
+}
+
+var nonFunctionChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // startGateway runs `tubas mcp` for the turn and lists its tools.
 func startGateway(ctx context.Context, launch GatewayLaunch, dir string) (func(), *rpcConn, []apiTool, error) {
@@ -358,7 +391,7 @@ func postJSON(ctx context.Context, client *http.Client, url string, headers map[
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("%s: %s", resp.Status, firstLine(string(raw)))
+		return friendlyHTTP(resp.StatusCode, firstLine(string(raw)))
 	}
 	return json.Unmarshal(raw, out)
 }
@@ -469,7 +502,7 @@ func (c *openAIChat) next(ctx context.Context) (apiStep, error) {
 	if len(tools) > 0 {
 		body["tools"] = tools
 	}
-	headers := map[string]string{}
+	headers := map[string]string{"X-Title": "tubas"} // how OpenRouter and others name the app
 	if c.key != "" {
 		headers["Authorization"] = "Bearer " + c.key
 	}
