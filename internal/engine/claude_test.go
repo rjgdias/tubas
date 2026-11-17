@@ -86,7 +86,7 @@ func TestParseStopsAtTokenLimit(t *testing.T) {
 
 func TestParseErrorResult(t *testing.T) {
 	_, _, err := collectStream(t, `{"type":"result","subtype":"error_max_turns","is_error":true,"result":"too many turns"}`+"\n", 0)
-	if err == nil || !strings.Contains(err.Error(), "error_max_turns") {
+	if err == nil || !strings.Contains(err.Error(), "too many turns") {
 		t.Errorf("expected the error to surface, got %v", err)
 	}
 }

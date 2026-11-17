@@ -280,7 +280,7 @@ func reorder(args []string) []string {
 		if strings.HasPrefix(args[i], "-") {
 			flags = append(flags, args[i])
 			name := strings.TrimLeft(args[i], "-")
-			isBool := name == "last" || name == "json" || name == "enter" || name == "worktree"
+			isBool := name == "last" || name == "json" || name == "enter" || name == "worktree" || name == "color"
 			if !isBool && !strings.Contains(args[i], "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
 				flags = append(flags, args[i])

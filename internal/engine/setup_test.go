@@ -109,11 +109,12 @@ func TestGatewayModels(t *testing.T) {
 	}))
 	defer srv.Close()
 	p := Provider{Env: map[string]string{"ANTHROPIC_BASE_URL": srv.URL + "/", "ANTHROPIC_AUTH_TOKEN": "tok"}}
-	got := strings.Join(GatewayModels(context.Background(), p), ",")
+	models, _ := GatewayModels(context.Background(), p)
+	got := strings.Join(models, ",")
 	if got != "acme-haiku,acme-sonnet" || auth != "Bearer tok" || version == "" {
 		t.Errorf("models %q, auth %q, version %q", got, auth, version)
 	}
-	if GatewayModels(context.Background(), Provider{}) != nil {
+	if none, _ := GatewayModels(context.Background(), Provider{}); none != nil {
 		t.Error("no gateway, no models")
 	}
 }

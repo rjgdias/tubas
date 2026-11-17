@@ -86,7 +86,7 @@ func TestDetachAndAttachAgain(t *testing.T) {
 	if again.session.Pending == nil {
 		t.Fatal("the replayed session should show its approval")
 	}
-	contains(t, again.Snapshot(128, 32), "publica", "publish_report", "1 blocked")
+	contains(t, again.Snapshot(128, 32), "publica", "publish_report")
 }
 
 // remoteModelSame opens a second screen on the same server.
@@ -111,11 +111,11 @@ func TestPickerSwitchesSessions(t *testing.T) {
 	m = feed(m, status(t, c))
 	m.picker = true
 	frame := m.Snapshot(128, 32)
-	contains(t, frame, "sessions", "primeira", "segunda", "on screen")
+	contains(t, frame, "conversations", "primeira", "segunda", "on screen")
 
 	idx := -1
-	for i, s := range m.status.Sessions {
-		if s.ID == first {
+	for i, c := range m.conversations() {
+		if c.ID == first {
 			idx = i
 		}
 	}

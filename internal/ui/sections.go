@@ -194,11 +194,11 @@ func (m Model) viewNav(cw int) string {
 		}
 	}
 	right := faintStyle.Render("alt+1…7")
-	if m.cfg.Remote != nil && m.status != nil && len(m.status.Sessions) > 0 {
-		if r := rollupText(m.status.Sessions); r != "" {
-			right = dimStyle.Render("sessions ") + r + faintStyle.Render(" · ctrl+g")
+	if convs := m.conversationStates(); m.cfg.Remote != nil && len(convs) > 1 {
+		if r := rollupText(convs); r != "" {
+			right = r + faintStyle.Render(" · ctrl+g")
 		} else {
-			right = faintStyle.Render("ctrl+g sessions")
+			right = faintStyle.Render("ctrl+g conversations")
 		}
 	}
 	if m.panes != nil && len(m.panes.infos) > 0 {
@@ -207,7 +207,7 @@ func (m Model) viewNav(cw int) string {
 			infos = append(infos, i)
 		}
 		if r := panesRollup(infos); r != "" {
-			if m.cfg.Remote != nil && m.status != nil && len(m.status.Sessions) > 0 {
+			if m.cfg.Remote != nil && len(m.conversations()) > 1 {
 				right = r + faintStyle.Render(" · ") + right
 			} else {
 				right = r // in place of the alt+1…7 reminder

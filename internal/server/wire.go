@@ -38,6 +38,8 @@ type Wire struct {
 	Cost    float64 `json:"cost,omitempty"`
 	Millis  int64   `json:"ms,omitempty"`
 	Passed  bool    `json:"passed,omitempty"`
+	Model   string  `json:"model,omitempty"`
+	Plan    bool    `json:"plan,omitempty"`
 	Limit   int     `json:"limit,omitempty"`
 	Error   string  `json:"error,omitempty"`
 
@@ -66,7 +68,7 @@ func Encode(e engine.Event) Wire {
 		return Wire{Kind: "approval", Agent: e.Agent, Call: e.Call, Detail: e.Detail}
 	case engine.TurnFinished:
 		return Wire{Kind: "turn_finished", Agent: e.Agent, Summary: e.Summary, Tokens: e.Tokens, Cached: e.Cached,
-			Cost: e.Cost, Millis: e.Elapsed.Milliseconds(), Passed: e.Passed}
+			Cost: e.Cost, Millis: e.Elapsed.Milliseconds(), Passed: e.Passed, Model: e.Model, Plan: e.Plan}
 	case engine.HandedOff:
 		return Wire{Kind: "handed_off", From: e.From, To: e.To, Note: e.Note}
 	case engine.SessionDone:
@@ -101,7 +103,7 @@ func (w Wire) Decode(reply chan<- bool) engine.Event {
 		return engine.ApprovalRequested{Agent: w.Agent, Call: w.Call, Detail: w.Detail, Reply: reply, ID: w.Approval}
 	case "turn_finished":
 		return engine.TurnFinished{Agent: w.Agent, Summary: w.Summary, Tokens: w.Tokens, Cached: w.Cached,
-			Cost: w.Cost, Elapsed: time.Duration(w.Millis) * time.Millisecond, Passed: w.Passed}
+			Cost: w.Cost, Elapsed: time.Duration(w.Millis) * time.Millisecond, Passed: w.Passed, Model: w.Model, Plan: w.Plan}
 	case "handed_off":
 		return engine.HandedOff{From: w.From, To: w.To, Note: w.Note}
 	case "done":

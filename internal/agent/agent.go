@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -142,8 +143,9 @@ func validate(a Agent) error {
 	if a.Name == "" {
 		return errors.New("missing the name field")
 	}
-	if strings.ContainsAny(a.Name, " @") || a.Name != strings.ToLower(a.Name) {
-		return fmt.Errorf("invalid name %q: use lowercase only, no spaces or @", a.Name)
+	if strings.ContainsAny(a.Name, ` @/\:*?"<>|`) || a.Name != strings.ToLower(a.Name) ||
+		strings.IndexFunc(a.Name, unicode.IsControl) >= 0 {
+		return fmt.Errorf("invalid name %q: use lowercase letters, numbers and - only", a.Name)
 	}
 	if a.Instructions == "" {
 		return fmt.Errorf("agent %s has no instructions after the header", a.Name)

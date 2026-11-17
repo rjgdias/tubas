@@ -41,7 +41,7 @@ func detectSetup(t *testing.T) *fakeWorld {
 	w := &fakeWorld{installed: map[string]string{}}
 	oldRun, oldLook, oldURL, oldModels := runCommand, lookPath, ollamaURL, gatewayModels
 	t.Cleanup(func() { runCommand, lookPath, ollamaURL, gatewayModels = oldRun, oldLook, oldURL, oldModels })
-	gatewayModels = func(context.Context, Provider) []string { return nil }
+	gatewayModels = func(context.Context, Provider) ([]string, error) { return nil, nil }
 
 	runCommand = func(ctx context.Context, env []string, name string, args ...string) (string, error) {
 		w.mu.Lock()

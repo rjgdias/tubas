@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,50 +18,68 @@ import (
 // ── what a work computer needs, copied from tucano ──────────────────────
 
 // GatewayModels asks the gateway in your Claude settings which models it
-// serves (GET <base>/v1/models), so the agent form can offer their real
-// names. Nil when there is no gateway or it does not say.
-func GatewayModels(ctx context.Context, p Provider) []string {
-	base := p.Get("ANTHROPIC_BASE_URL")
+// serves, as tucano does: GET <base>/v1/models (then <base>/models, for
+// gateways that speak OpenAI's way), with your token, apiKeyHelper and
+// headers. The error says why when it can't.
+func GatewayModels(ctx context.Context, p Provider) ([]string, error) {
+	base := strings.TrimRight(p.Get("ANTHROPIC_BASE_URL"), "/")
 	if base == "" {
-		return nil
+		return nil, nil
 	}
 	resolved, err := p.Resolved()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	key := resolved.Get("ANTHROPIC_AUTH_TOKEN")
 	if key == "" {
 		key = resolved.Get("ANTHROPIC_API_KEY")
 	}
+	var lastErr error
+	for _, path := range []string{"/v1/models?limit=1000", "/models"} {
+		models, err := listModels(ctx, base+path, key, p.Headers())
+		if err == nil && len(models) > 0 {
+			return models, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("the list came back empty")
+	}
+	return nil, lastErr
+}
+
+func listModels(ctx context.Context, url, key string, headers map[string]string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(base, "/")+"/v1/models?limit=1000", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	req.Header.Set("anthropic-version", "2023-06-01")
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 		req.Header.Set("x-api-key", key)
 	}
-	for k, v := range p.Headers() {
+	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return nil, fmt.Errorf("the gateway answered %s", resp.Status)
 	}
 	var list struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if json.NewDecoder(resp.Body).Decode(&list) != nil {
-		return nil
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, fmt.Errorf("unreadable model list: %w", err)
 	}
 	seen := map[string]bool{}
 	var out []string
@@ -71,7 +90,7 @@ func GatewayModels(ctx context.Context, p Provider) []string {
 		}
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // AdoptPath makes agent CLIs findable where their installers put them,

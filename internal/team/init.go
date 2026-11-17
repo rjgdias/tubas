@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// Init creates a new team folder with a team.yaml and two agents to
-// start from: one who does the work and one who reviews it.
+// Init creates a new team folder with a team.yaml and one assistant: a
+// plain chat to start from. Teammates come when you add them.
 func Init(dir string) error {
 	if _, err := os.Stat(filepath.Join(dir, "team.yaml")); err == nil {
 		return fmt.Errorf("%s already has a team.yaml", dir)
@@ -24,9 +24,8 @@ func Init(dir string) error {
 	}
 
 	files := map[string]string{
-		"team.yaml":     fmt.Sprintf(teamTemplate, name, name),
-		"agents/ana.md": anaTemplate,
-		"agents/rui.md": ruiTemplate,
+		"team.yaml":       fmt.Sprintf(teamTemplate, name),
+		"agents/tubas.md": assistantTemplate,
 	}
 	for path, content := range files {
 		full := filepath.Join(abs, path)
@@ -43,71 +42,42 @@ func Init(dir string) error {
 	return nil
 }
 
-const teamTemplate = `# Your team. Run it with:  tubas -team <this folder>
+const teamTemplate = `# Your tubas. Run it with:  tubas -team <this folder>
+#
+# It starts as a plain chat with one assistant. Change its model with
+# /model; add teammates with /agents (then they hand work to each other).
 
 name: %s
-example: "what should we look at first?"
-lead: ana      # questions that mention no one go to her
+lead: tubas
 max_hops: 6
 
 connectors:
-  # Publishing a markdown report: a write, so it waits for your yes.
-  reports:
-    builtin: reports
-    dir: reports
-    channel: "#%s"
-
-  # Add tools from any MCP server that runs locally, for example:
+  # Give the assistant tools from any MCP server, a repository or a
+  # database, then access in its file, e.g.  tools: { files: read }
   #
   # files:
   #   command: npx
   #   args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
   #   read: [read_text_file, list_directory, search_files]
   #
-  # Or a SQLite database, read-only:
+  # api:
+  #   repo: /path/to/your/repository
   #
   # db:
   #   builtin: sqlite
   #   db: data/my.db
-  #
-  # Then give an agent access in its file, e.g.  tools: { files: read }
 `
 
-const anaTemplate = `---
-name: ana
-role: researcher
-color: orange
-harness: claude
+const assistantTemplate = `---
+name: tubas
+role: assistant
+color: cyan
 model: sonnet
-tools:
-  reports: read
-can_call: [rui]
-token_limit: 50000
+token_limit: 80000
 ---
-You are Ana, the team's researcher.
+You are a helpful assistant in a terminal chat.
 
-Understand the question, use your tools to find what you need, and answer
-with a clear conclusion and the evidence behind it.
-
-When you have a conclusion worth sharing, ask @rui to review it.
-Answer in the language the human used.
-`
-
-const ruiTemplate = `---
-name: rui
-role: reviewer
-color: blue
-harness: claude
-model: sonnet
-tools:
-  reports: write
-can_call: [ana]
-token_limit: 40000
----
-You are Rui, the team's reviewer.
-
-Check that every claim has evidence and that nothing important is missing.
-If something is weak, send it back to @ana saying exactly what to redo.
-If it holds, publish a short report (that waits for human approval).
-Answer in the language the human used.
+Answer clearly and directly, in the language the person writes in. Use
+markdown when it helps (lists, code blocks, tables), and keep answers as
+short as the question allows.
 `

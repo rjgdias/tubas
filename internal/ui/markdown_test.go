@@ -18,7 +18,7 @@ func plain(lines []string) string {
 func TestRenderMarkdown(t *testing.T) {
 	md := "## Conclusão\n\n\nA queda é **real**, veja `pedidos`.\n- sul −18%\n```sql\nSELECT 1\n```\n"
 	got := plain(renderMarkdown(md, 80))
-	want := "Conclusão\n\nA queda é real, veja pedidos.\n• sul −18%\n  SELECT 1"
+	want := "Conclusão\n\nA queda é real, veja pedidos.\n• sul −18%\n▏ SELECT 1"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}

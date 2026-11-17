@@ -101,7 +101,7 @@ func TestClickSessionsInTheSidebar(t *testing.T) {
 		t.Fatal("with sessions on the server, the sidebar shows them")
 	}
 	frame := ansi.Strip(m.Snapshot(140, 32))
-	contains(t, frame, "sessions", "corrige o timeout", "revisa o PR", "+ new session")
+	contains(t, frame, "conversations", "corrige o timeout", "revisa o PR", "+ new conversation")
 	_, rows := m.sidebarLines(sidebarW, m.bodyHeight())
 	row := -1
 	for i, r := range rows {

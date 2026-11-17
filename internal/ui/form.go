@@ -128,7 +128,7 @@ func (m Model) formKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			if msg.Type == tea.KeySpace {
 				fl.value += " "
 			} else {
-				fl.value += string(msg.Runes)
+				fl.value += typedText(msg)
 			}
 		}
 	}

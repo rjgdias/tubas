@@ -221,7 +221,7 @@ func (m Model) sidebarShown() bool {
 	if ps.sidebar != nil {
 		return *ps.sidebar
 	}
-	sessions := m.cfg.Remote != nil && m.status != nil && len(m.status.Sessions) >= 2
+	sessions := m.cfg.Remote != nil && len(m.conversations()) >= 2
 	return (ps.terminals() > 0 || sessions) && m.width-2 >= 110
 }
 
@@ -306,24 +306,24 @@ func (m Model) sidebarLines(w, h int) ([]string, []sideRow) {
 			rows = append(rows, sideRow{ws: wi, tab: -1, action: "newtab"})
 		}
 	}
-	// The team's sessions, on the server: click one to show it in the chat.
-	if m.cfg.Remote != nil && m.status != nil {
-		lines = append(lines, "", " "+faintStyle.Render("sessions"))
+	// Your conversations, on the server: click one to show it in the chat.
+	if convs := m.conversations(); m.cfg.Remote != nil && len(convs) > 0 {
+		lines = append(lines, "", " "+faintStyle.Render("conversations"))
 		rows = append(rows, nothing, nothing)
-		for _, s := range m.status.Sessions {
-			label := fit(orDefault(s.Title, "new session"), w-6)
+		for _, c := range convs {
+			label := fit(c.Title, w-6)
 			line := "   " + dimStyle.Render(label)
-			if s.ID == m.remoteID {
+			if c.ID == m.conversation {
 				line = " " + hiStyle.Render("› ") + textStyle.Render(label)
 			}
 			icon := ""
-			if s.State != server.Idle {
-				icon = stateIcon(s.State, m.frame)
+			if c.State != server.Idle {
+				icon = stateIcon(c.State, m.frame)
 			}
 			lines = append(lines, spread(line, icon+" ", w))
-			rows = append(rows, sideRow{ws: -1, tab: -1, session: s.ID})
+			rows = append(rows, sideRow{ws: -1, tab: -1, session: c.ID})
 		}
-		lines = append(lines, "   "+hiStyle.Render("+")+faintStyle.Render(" new session"))
+		lines = append(lines, "   "+hiStyle.Render("+")+faintStyle.Render(" new conversation"))
 		rows = append(rows, sideRow{ws: -1, tab: -1, action: "newsession"})
 	}
 	for len(lines) < h-1 {

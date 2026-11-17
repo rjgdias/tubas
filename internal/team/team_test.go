@@ -69,8 +69,9 @@ func TestInitCreatesALoadableTeam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the new team should load: %v", err)
 	}
-	if tm.Name != "suporte" || len(tm.Agents) != 2 {
-		t.Errorf("team = %s with %d agents", tm.Name, len(tm.Agents))
+	// A plain chat to start from: one assistant, teammates when you add them.
+	if tm.Name != "suporte" || len(tm.Agents) != 1 || tm.Agents[0].Name != "tubas" || tm.Lead != "tubas" {
+		t.Errorf("team = %s with %d agents, lead %s", tm.Name, len(tm.Agents), tm.Lead)
 	}
 	if err := Init(dir); err == nil {
 		t.Error("init over an existing team should fail")

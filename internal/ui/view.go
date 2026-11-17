@@ -58,6 +58,8 @@ func (m Model) screen(cw int) []string {
 
 	var body []string
 	switch {
+	case m.modelPick != nil:
+		body = m.viewModelPicker(cw, bodyH)
 	case m.picker:
 		body = m.viewPicker(cw, bodyH)
 	case m.review:
@@ -96,6 +98,13 @@ func (m Model) viewHeader(cw int) string {
 		left += dimStyle.Render(" · grid")
 	}
 	s := m.session
+	if m.solo() {
+		right := dimStyle.Render(m.soloModel())
+		if s.started() {
+			right += dimStyle.Render(" · " + usageText(s.usage()))
+		}
+		return spread(left, right, cw)
+	}
 	if !s.started() {
 		return spread(left, m.teamStatus()+dimStyle.Render("     no session yet"), cw)
 	}
@@ -143,6 +152,9 @@ func (m Model) flowText() string {
 // ── start screen ────────────────────────────────────────────────────────
 
 func (m Model) viewStart(cw, h int) []string {
+	if m.solo() {
+		return m.viewSoloStart(cw, h)
+	}
 	head := fmt.Sprintf("team %s · %d agents", m.cfg.Name, len(m.team))
 	connectors := ""
 	if len(m.cfg.Connectors) > 0 {
@@ -195,6 +207,44 @@ func (m Model) viewStart(cw, h int) []string {
 	return lines
 }
 
+// viewSoloStart greets you in a plain chat: just ask.
+func (m Model) viewSoloStart(cw, h int) []string {
+	side := []string{"", boldStyle.Render("tubas"), dimStyle.Render("ask anything · " + m.soloModel()),
+		dimStyle.Render("/model changes the model · /agents builds a team"), faintStyle.Render("/ for every command · ? for keys")}
+	lines := []string{""}
+	if cw >= tubaleiaWidth+30 && h >= 12 {
+		for i, row := range tubaleia() {
+			text := ""
+			if i < len(side) {
+				text = side[i]
+			}
+			lines = append(lines, row+"   "+text)
+		}
+	} else {
+		lines = append(lines, side[1:]...)
+	}
+	for i := range lines {
+		lines[i] = fit(lines[i], cw)
+	}
+	return lines
+}
+
+// soloModel is the model of a plain chat's assistant, as shown.
+func (m Model) soloModel() string {
+	if len(m.team) == 0 {
+		return ""
+	}
+	a := m.team[0]
+	model := orDefault(a.Model, "sonnet")
+	if a.Provider != "" && a.Provider != "anthropic" {
+		model += " · " + a.Provider
+	}
+	if a.Harness != "" && a.Harness != "claude" {
+		model += " · " + a.Harness
+	}
+	return model
+}
+
 // colorMention paints the leading @agent of a text in the agent's color.
 func (m Model) colorMention(text string) string {
 	if !strings.HasPrefix(text, "@") {
@@ -213,14 +263,31 @@ func (m Model) colorMention(text string) string {
 
 // ── the log ─────────────────────────────────────────────────────────────
 
-// viewLog renders the conversation. If it does not fit, finished turns
-// shrink to one line each, so the active one keeps its room.
+// viewLog renders the conversation in h lines. Answers are never cut
+// down: when they don't fit, the view scrolls (pgup, pgdown, the wheel),
+// following the bottom unless you scrolled back.
 func (m Model) viewLog(cw, h int) []string {
 	lines := m.logLines(cw, false)
-	if len(lines) > h {
-		lines = m.logLines(cw, true)
+	if len(lines) <= h {
+		return lines
 	}
-	return lines
+	scroll := max(0, min(m.scroll, len(lines)-h))
+	end := len(lines) - scroll
+	window := lines[end-h : end]
+	if scroll > 0 && h > 0 {
+		window = append(window[:h-1:h-1], faintStyle.Render(fmt.Sprintf("  ↓ %d more lines · pgdown", scroll)))
+	}
+	return window
+}
+
+// solo says whether the team is one agent: then tubas is a plain chat,
+// with none of the orchestration on screen.
+func (m Model) solo() bool { return len(m.team) == 1 }
+
+// scrollBy moves the conversation view (positive: back in time).
+func (m Model) scrollBy(n int) Model {
+	m.scroll = max(0, m.scroll+n)
+	return m
 }
 
 func (m Model) logLines(cw int, compact bool) []string {
@@ -237,10 +304,19 @@ func (m Model) logLines(cw int, compact bool) []string {
 		}
 	}
 
-	// Earlier sessions of the conversation, always compact.
+	// Earlier sessions of the conversation: whole in a plain chat, one
+	// line per turn when a team worked on them.
 	for i, p := range m.past {
 		if i > 0 {
 			out = append(out, "")
+		}
+		if m.solo() {
+			emit(append([]string{boldStyle.Render("you") + dimStyle.Render("  "+p.AskedAt)}, wrap(m.questionText(p), iw)...), false, "")
+			for _, t := range p.Turns {
+				out = append(out, "")
+				emit(m.turnBlock(t, iw, false), false, t.Agent)
+			}
+			continue
 		}
 		lines := []string{fit(dimStyle.Render("you")+"   "+m.questionText(p), iw)}
 		for _, t := range p.Turns {
@@ -265,7 +341,7 @@ func (m Model) logLines(cw int, compact bool) []string {
 	} else {
 		block = append([]string{boldStyle.Render("you") + dimStyle.Render("  "+s.AskedAt)}, wrap(question, iw)...)
 	}
-	if route := m.routeLine(s, iw); route != "" {
+	if route := m.routeLine(s, iw); route != "" && !m.solo() {
 		block = append(block, route)
 	}
 	emit(block, false, "")
@@ -286,7 +362,7 @@ func (m Model) logLines(cw int, compact bool) []string {
 		prevOneLiner = oneLiner
 	}
 
-	if end := outcomeLines(s, iw); len(end) > 0 {
+	if end := outcomeLines(s, iw); len(end) > 0 && !(m.solo() && s.Outcome == Finished) {
 		out = append(out, "")
 		emit(end, false, "")
 	}
@@ -375,6 +451,16 @@ func (m Model) turnBlock(t Turn, w int, open bool) []string {
 		role = a.Role
 	}
 	head := m.agentStyle(t.Agent).Bold(true).Render(t.Agent) + dimStyle.Render("  "+role+" · ")
+	if m.solo() {
+		head = m.agentStyle(t.Agent).Bold(true).Render(t.Agent) + dimStyle.Render("  ")
+		if t.Status == Done || t.Status == Passed {
+			info := fmt.Sprintf("%ds", t.Seconds)
+			if t.Model != "" {
+				info = t.Model + " · " + info
+			}
+			return append([]string{fit(head+dimStyle.Render(info), w)}, m.turnBody(t, w, open)...)
+		}
+	}
 	switch t.Status {
 	case Passed:
 		return []string{fit(head+dimStyle.Render("passed · nothing to add"), w)}
@@ -396,9 +482,22 @@ func (m Model) turnBlock(t Turn, w int, open bool) []string {
 		if otherModel(t.Model) {
 			cost = " · " + t.Model + cost
 		}
-		head += dimStyle.Render(fmt.Sprintf("%d queries · %s%s · %ds", t.queries(), fmtTokens(t.Tokens), cost, t.Seconds))
+		calls := ""
+		switch n := t.queries(); n {
+		case 0:
+		case 1:
+			calls = "1 tool call · "
+		default:
+			calls = fmt.Sprintf("%d tool calls · ", n)
+		}
+		head += dimStyle.Render(fmt.Sprintf("%s%s tok%s · %ds", calls, fmtTokens(t.Tokens), cost, t.Seconds))
 	}
-	lines := []string{fit(head, w)}
+	return append([]string{fit(head, w)}, m.turnBody(t, w, open)...)
+}
+
+// turnBody is what a turn did and said, under its head.
+func (m Model) turnBody(t Turn, w int, open bool) []string {
+	var lines []string
 	if t.From == "" && t.Ask != "" { // the parallel answers came back to this agent
 		lines = append(lines, fit(dimStyle.Render("↩ "+t.Ask), w))
 	}
@@ -468,8 +567,8 @@ func stepLine(st Step) string {
 func outcomeLines(s Session, w int) []string {
 	switch s.Outcome {
 	case Finished:
-		return []string{ruleWith(okStyle.Render("done")+dimStyle.Render(fmt.Sprintf("  %d hops · %s · %ds",
-			len(s.Turns), usageText(s.usage()), int(s.Elapsed.Seconds()))), w)}
+		return []string{ruleWith(okStyle.Render("done")+dimStyle.Render(fmt.Sprintf("  %s · %s · %ds", plural(len(s.Turns), "hop"),
+			usageText(s.usage()), int(s.Elapsed.Seconds()))), w)}
 	case HopLimit:
 		return []string{
 			ruleWith(badStyle.Render("stopped")+dimStyle.Render("  "+s.Detail), w),
@@ -566,7 +665,11 @@ func (m Model) viewPopup() []string {
 	}
 	idx := min(m.popupIdx, len(c)-1)
 	edge := faintStyle.Render("│ ")
-	lines := []string{edge + dimStyle.Render("mention an agent")}
+	title := "mention an agent"
+	if strings.HasPrefix(string(m.input), "/") {
+		title = "commands"
+	}
+	lines := []string{edge + dimStyle.Render(title)}
 	for i, a := range c {
 		if i == idx {
 			lines = append(lines, edge+barBold.Render(fmt.Sprintf(" %-8s", a.Name))+
@@ -589,10 +692,14 @@ func (m Model) viewInput(cw int) string {
 			text = dimStyle.Render("…") + textStyle.Render(string(m.input[len(m.input)-room:]))
 		}
 		left = prompt + text + cursor
+	case m.running && m.session.Pending == nil && m.solo():
+		left = dimStyle.Render("› thinking…")
 	case m.running && m.session.Pending == nil:
 		left = dimStyle.Render("› agents are working…")
 	case !m.session.started():
 		left = prompt + cursor
+	case m.session.Outcome != Ongoing && m.solo():
+		left = prompt + cursor + dimStyle.Render(" ask a follow-up")
 	case m.session.Outcome != Ongoing:
 		left = prompt + cursor + dimStyle.Render(" ask a follow-up, or @agent something new")
 	default:
@@ -621,10 +728,12 @@ func (m Model) hint() string {
 		return "tab focus view · ? keys"
 	case m.running && m.session.Pending == nil:
 		return "esc stop · ? keys"
+	case m.session.Outcome != Ongoing && m.solo():
+		return "pgup scroll · / commands · ctrl+n new"
 	case m.session.Outcome != Ongoing:
 		return "ctrl+r run again · ? keys"
 	default:
-		return "enter send · ? keys · ctrl+c quit"
+		return "enter send · / commands · ? keys"
 	}
 }
 
@@ -796,4 +905,12 @@ func (m Model) viewSmall() string {
 		dimStyle.Render("make it bigger · agents keep working"),
 	)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, msg)
+}
+
+// plural is "1 hop", "3 hops".
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }

@@ -201,7 +201,7 @@ func (c ClaudeEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- E
 	case parseErr != nil:
 		return Reply{}, parseErr
 	case waitErr != nil:
-		return Reply{}, fmt.Errorf("claude exited: %v %s", waitErr, lastLine(stderr.String()))
+		return Reply{}, explain(fmt.Sprintf("claude exited: %v %s", waitErr, lastLine(stderr.String())))
 	}
 	reply.Model, reply.Plan = model, plan
 	if !isClaudeModel(model) {
@@ -425,7 +425,7 @@ func handleLine(l streamLine, agentName string, limit int, emit func(Event) erro
 
 	case "result":
 		if l.IsError || (l.Subtype != "" && l.Subtype != "success") {
-			return true, fmt.Errorf("claude: %s %s", l.Subtype, firstLine(l.Result))
+			return true, explain(firstLine(l.Result))
 		}
 		reply.Text = l.Result
 		if l.Usage != nil {
@@ -436,6 +436,23 @@ func handleLine(l streamLine, agentName string, limit int, emit func(Event) erro
 		return true, nil
 	}
 	return false, nil
+}
+
+// explain turns what claude says when a turn fails into what to do.
+func explain(msg string) error {
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "not logged in") || strings.Contains(low, "/login"):
+		return errors.New("claude is not signed in: run claude and type /login, " +
+			"or put your company gateway in ~/.claude/settings.json (env: ANTHROPIC_BASE_URL and a token or apiKeyHelper)")
+	case strings.Contains(low, "401") || strings.Contains(low, "authentication") || strings.Contains(low, "invalid api key"):
+		return errors.New("the provider refused the key (" + strings.TrimSpace(msg) + "): check the token or apiKeyHelper in your Claude settings")
+	case strings.Contains(low, "model") && (strings.Contains(low, "not found") || strings.Contains(low, "404") || strings.Contains(low, "invalid")):
+		return errors.New("this model is not available here (" + strings.TrimSpace(msg) + "): /model picks one your provider serves")
+	case strings.Contains(low, "credit balance") || strings.Contains(low, "usage limit") || strings.Contains(low, "rate limit") || strings.Contains(low, "429"):
+		return errors.New("the provider is limiting use right now (" + strings.TrimSpace(msg) + "): wait a little and ask again")
+	}
+	return errors.New("claude: " + strings.TrimSpace(msg))
 }
 
 // describeCall turns a tool call into "run_sql(SELECT ...)".

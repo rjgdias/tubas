@@ -113,7 +113,7 @@ func (m Model) copyKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			}
 		default:
 			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-				c.query += string(msg.Runes)
+				c.query += typedText(msg)
 				if msg.Type == tea.KeySpace {
 					c.query += " "
 				}

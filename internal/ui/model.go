@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -137,11 +138,12 @@ type Model struct {
 	providers   []engine.Detected // AI providers found on this computer
 
 	// With a background server.
-	remoteID string         // the session on screen
-	status   *server.Status // the last picture from the server
-	picker   bool           // the session picker (ctrl+g) is open
-	pickIdx  int
-	prefix   bool // ctrl+b was pressed: the next key is an app action
+	remoteID     string         // the session on screen
+	conversation string         // the conversation it belongs to: follow-ups continue it
+	status       *server.Status // the last picture from the server
+	picker       bool           // the session picker (ctrl+g) is open
+	pickIdx      int
+	prefix       bool // ctrl+b was pressed: the next key is an app action
 
 	// Code: the worktrees of the session on screen, and the review.
 	code        *repo.Set
@@ -149,8 +151,15 @@ type Model struct {
 	review      bool
 	fileIdx     int
 	reviewWT    int
-	panes       *paneState // terminal panes next to the chat, nil when off
-	selected    int        // index of the selected turn, -1 for none
+	panes       *paneState   // terminal panes next to the chat, nil when off
+	selected    int          // index of the selected turn, -1 for none
+	scroll      int          // lines the conversation is scrolled back from the bottom
+	modelPick   *modelPicker // /model, while open
+	gatewayNote string       // why the gateway's models are missing, when they are
+	// aliases are what your Claude settings make sonnet, opus and haiku
+	// mean; with a gateway that lists its models, only those show.
+	aliases     map[string]string
+	onGateway   bool
 	grid        bool
 	showDetails bool
 	showHelp    bool
@@ -394,12 +403,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case providersMsg:
 		m.providers = msg
+		m.gatewayNote = ""
+		for _, d := range msg {
+			if d.Name == "gateway" && len(d.Models) == 0 && d.ModelsErr != "" {
+				m.gatewayNote = "your gateway did not list its models: " + d.ModelsErr + " · you can type a model name"
+			}
+		}
 		for _, d := range msg { // a gateway's own model names, for the agent form
 			if d.Name == "gateway" && len(d.Models) > 0 {
 				if m.cfg.Providers == nil {
 					m.cfg.Providers = map[string][]string{}
 				}
 				m.cfg.Providers["anthropic"] = d.Models
+				m.onGateway = true
+				m.aliases = aliasMeanings(m.cfg.WorkDir)
 			}
 		}
 
@@ -468,6 +485,11 @@ func (m Model) handle(e engine.Event) Model {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	// The model picker (/model) takes every key until it closes.
+	if m.modelPick != nil {
+		return m.modelPickerKey(msg)
+	}
+
 	// A terminal pane has the keys: everything goes to it but ctrl+b
 	// (and alt+1…7, tubas's sections).
 	if m.panes != nil && m.panes.closing != "" && m.form == nil {
@@ -483,6 +505,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.goTo(s), nil
 		}
 		return m.paneInput(msg)
+	}
+
+	if key == "ctrl+o" && m.form == nil {
+		return m.openModelPicker(), nil
 	}
 
 	// 1. Always available.
@@ -560,6 +586,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.sectionKey(key)
 	}
 
+	// The conversation scrolls whatever you are typing.
+	switch key {
+	case "pgup":
+		return m.scrollBy(max(3, m.height-12)), nil
+	case "pgdown":
+		return m.scrollBy(-max(3, m.height-12)), nil
+	}
+
 	// 4. The @mention menu, while it is open.
 	if m.popupOpen() {
 		switch key {
@@ -570,6 +604,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.popupIdx = min(len(m.candidates())-1, m.popupIdx+1)
 			return m, nil
 		case "tab", "enter":
+			if c := m.commandCandidates(); len(c) > 0 {
+				return m.runCommand(c[min(m.popupIdx, len(c)-1)].Name)
+			}
 			return m.complete(), nil
 		case "esc":
 			m.popupDismissed = true
@@ -598,9 +635,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.grid = !m.grid
 		return m, nil
 	case "up":
+		if m.solo() {
+			return m.scrollBy(3), nil
+		}
 		m = m.moveSelection(-1)
 		return m, nil
 	case "down":
+		if m.solo() {
+			return m.scrollBy(-3), nil
+		}
 		m = m.moveSelection(+1)
 		return m, nil
 	case "enter":
@@ -631,6 +674,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.editInput(msg)
 }
 
+// typedText is what a key typed, without control characters: invisible,
+// they would turn "/model" into a question or break a file name.
+func typedText(msg tea.KeyMsg) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, string(msg.Runes))
+}
+
 // editInput changes the text you are typing.
 func (m Model) editInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
@@ -646,7 +700,14 @@ func (m Model) editInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input = append(slices.Clone(m.input), ' ')
 	case tea.KeyRunes:
 		// Clone before append, so the old model's input stays untouched.
-		m.input = append(slices.Clone(m.input), msg.Runes...)
+		// Control characters (a ctrl key some terminals also send as
+		// text) are invisible: kept, they would turn "/model" into a
+		// question.
+		typed := typedText(msg)
+		if typed == "" {
+			return m, nil
+		}
+		m.input = append(slices.Clone(m.input), []rune(typed)...)
 	default:
 		return m, nil
 	}
@@ -660,12 +721,17 @@ func (m Model) send() (Model, tea.Cmd) {
 		m.notice = badStyle.Render("agents are still working · esc stops them")
 		return m, nil
 	}
+	if text := strings.TrimSpace(string(m.input)); strings.HasPrefix(text, "/") {
+		name, _, _ := strings.Cut(text[1:], " ")
+		return m.runCommand(name)
+	}
 	r, err := m.parseAsk(string(m.input))
 	if err != nil {
 		m.notice = badStyle.Render(err.Error())
 		return m, nil
 	}
 	m.input = nil
+	m.scroll = 0 // back to the bottom, where the answer comes
 	if m.session.started() {
 		// A follow-up: the finished session joins the conversation's past,
 		// and the agents get it as context.
@@ -723,6 +789,9 @@ func (m Model) parseAsk(text string) (request, error) {
 // candidates are the agents that match the @name being typed, plus
 // @todos for the whole team.
 func (m Model) candidates() []agent.Agent {
+	if c := m.commandCandidates(); c != nil {
+		return c
+	}
 	s := string(m.input)
 	if !strings.HasPrefix(s, "@") || strings.ContainsRune(s, ' ') {
 		return nil

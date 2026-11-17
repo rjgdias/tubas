@@ -96,11 +96,11 @@ func pumpRemote(ctx context.Context, c *server.Client, id string, out chan<- eng
 // startRemote starts a session on the server and listens to it.
 func (m Model) startRemote(r request, ctx context.Context, events chan engine.Event) (Model, error) {
 	info, err := m.cfg.Remote.Start(server.StartRequest{Target: r.target, Question: r.question, Everyone: r.everyone,
-		Context: conversationContext(m.past)})
+		Context: conversationContext(m.past), Conversation: m.conversation})
 	if err != nil {
 		return m, err
 	}
-	m.remoteID = info.ID
+	m.remoteID, m.conversation = info.ID, convOf(info)
 	go pumpRemote(ctx, m.cfg.Remote, info.ID, events)
 	return m, nil
 }
@@ -119,7 +119,7 @@ func (m Model) attach(info server.Info) (Model, tea.Cmd) {
 	m.queue = slices.DeleteFunc(slices.Clone(m.queue), func(p pendingApproval) bool {
 		return p.routine == "" || p.session == info.ID
 	})
-	m.remoteID = info.ID
+	m.remoteID, m.conversation = info.ID, convOf(info)
 	m.past = nil
 	m.selected, m.showDetails, m.notice, m.picker = -1, false, "", false
 	m.last = request{target: info.Target, question: info.Question}
@@ -139,9 +139,9 @@ func (m Model) newSession() Model {
 	m.run++
 	m.running, m.events, m.cancel = false, nil, nil
 	m.queue = slices.DeleteFunc(slices.Clone(m.queue), func(p pendingApproval) bool { return p.routine == "" })
-	m.session, m.past, m.remoteID = Session{}, nil, ""
+	m.session, m.past, m.remoteID, m.conversation, m.scroll = Session{}, nil, "", "", 0
 	m.selected, m.picker, m.section = -1, false, SecChat
-	m.notice = dimStyle.Render("new session · the others keep running (ctrl+g)")
+	m.notice = dimStyle.Render("new conversation · the others stay in ctrl+g")
 	return m
 }
 
@@ -208,6 +208,11 @@ func (m Model) firstAttach(st server.Status) (Model, tea.Cmd) {
 	if best < 0 {
 		return m, nil
 	}
+	for _, c := range m.conversations() { // the whole conversation, not just its last message
+		if c.ID == convOf(st.Sessions[best]) {
+			return m.attachConversation(c)
+		}
+	}
 	return m.attach(st.Sessions[best])
 }
 
@@ -270,10 +275,7 @@ func stateIcon(state string, frame int) string {
 // ── the session picker (ctrl+g) ─────────────────────────────────────────
 
 func (m Model) pickerKey(key string) (Model, tea.Cmd) {
-	var list []server.Info
-	if m.status != nil {
-		list = m.status.Sessions
-	}
+	list := m.conversations()
 	switch key {
 	case "esc", "ctrl+g":
 		m.picker = false
@@ -285,40 +287,36 @@ func (m Model) pickerKey(key string) (Model, tea.Cmd) {
 		return m.newSession(), nil
 	case "enter":
 		if m.pickIdx < len(list) {
-			return m.attach(list[m.pickIdx])
+			return m.attachConversation(list[m.pickIdx])
 		}
 	}
 	return m, nil
 }
 
 func (m Model) viewPicker(cw, h int) []string {
-	lines := []string{boldStyle.Render("sessions") + dimStyle.Render(" · all running at once on the server"), ""}
-	if m.status == nil || len(m.status.Sessions) == 0 {
+	lines := []string{boldStyle.Render("conversations") + dimStyle.Render(" · enter shows one · ctrl+n starts a new one"), ""}
+	list := m.conversations()
+	if len(list) == 0 {
 		return fitHeight(append(lines, dimStyle.Render("none yet · ask something and it becomes one")), h, false)
 	}
-	for i, s := range m.status.Sessions {
-		who := s.Agent
-		if who == "" {
-			who = s.Target
-		}
-		kind := ""
-		if s.Kind == "routine" {
-			kind = faintStyle.Render(" routine")
-		}
-		what := s.State
-		switch s.State {
+	for i, c := range list {
+		last := c.latest()
+		what := c.State
+		switch c.State {
 		case server.Blocked:
-			what = "waits for you: " + s.Waiting
+			what = "waits for you: " + last.Waiting
 		case server.Working:
-			what = "working " + time.Since(s.Created).Round(time.Second).String()
+			what = "working " + time.Since(last.Created).Round(time.Second).String()
 		case server.Done, server.Idle:
-			first, _, _ := strings.Cut(strings.TrimSpace(orDefault(s.Summary, s.Error)), "\n")
-			what = first
+			what = plainSummary(orDefault(last.Summary, last.Error))
 		}
-		name := fmt.Sprintf("%-32s", fit(s.Title, 32))
-		row := stateIcon(s.State, m.frame) + " " + textStyle.Render(name) + kind + "  " +
-			m.agentStyle(who).Render(fmt.Sprintf("%-8s", who)) + dimStyle.Render(what)
-		if s.ID == m.remoteID {
+		count := ""
+		if n := len(c.Sessions); n > 1 {
+			count = fmt.Sprintf(" · %d messages", n)
+		}
+		name := fmt.Sprintf("%-36s", fit(c.Title, 34))
+		row := stateIcon(c.State, m.frame) + " " + textStyle.Render(name) + dimStyle.Render(what+count)
+		if c.ID == m.conversation {
 			row += faintStyle.Render("  · on screen")
 		}
 		if i == m.pickIdx {
@@ -328,6 +326,6 @@ func (m Model) viewPicker(cw, h int) []string {
 		}
 		lines = append(lines, fit(row, cw))
 	}
-	lines = append(lines, "", dimStyle.Render("◐ blocked  ⠹ working  ● done, not seen  ○ seen"))
+	lines = append(lines, "", dimStyle.Render("◐ waits for you  ⠹ working  ● done, not seen  ○ seen"))
 	return fitHeight(lines, h, false)
 }

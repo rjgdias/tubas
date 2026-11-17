@@ -67,9 +67,18 @@ func runPane(args []string) {
 			fmt.Println(paneLine(p))
 		}
 	case "read":
+		color := fs.Bool("color", false, "keep the colors (ANSI)")
 		fs.Parse(reorder(args))
 		if fs.NArg() != 1 {
 			fail("use: tubas pane read ID")
+		}
+		if *color {
+			scr, err := client(*teamDir, false).Panes().Screen(fs.Arg(0), -1, 0)
+			if err != nil {
+				fail("%v", err)
+			}
+			fmt.Println(strings.Join(scr.Lines, "\n"))
+			return
 		}
 		text, err := client(*teamDir, false).PaneText(fs.Arg(0))
 		if err != nil {

@@ -67,15 +67,15 @@ func (m Model) mouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case m.picker:
-		if press && m.status != nil && by >= 2 && by-2 < len(m.status.Sessions) {
-			return m.attach(m.status.Sessions[by-2])
+		if convs := m.conversations(); press && by >= 2 && by-2 < len(convs) {
+			return m.attachConversation(convs[by-2])
 		}
 		return m, nil
 	case m.review:
 		return m, nil
 	case !m.split():
 		if wheel && msg.Action == tea.MouseActionPress {
-			m = m.moveSelection(map[bool]int{true: -1, false: 1}[up])
+			m = m.scrollBy(map[bool]int{true: 3, false: -3}[up])
 		}
 		return m, nil
 	}
@@ -169,15 +169,13 @@ func (m Model) clickSidebar(by, bodyH int) (Model, tea.Cmd) {
 		m = m.showChat()
 		return m.newSession(), nil
 	case row.session != "":
-		if m.status != nil {
-			for _, s := range m.status.Sessions {
-				if s.ID == row.session {
-					m = m.showChat()
-					if s.ID == m.remoteID {
-						return m, nil
-					}
-					return m.attach(s)
+		for _, c := range m.conversations() {
+			if c.ID == row.session {
+				m = m.showChat()
+				if c.ID == m.conversation {
+					return m, nil
 				}
+				return m.attachConversation(c)
 			}
 		}
 	case row.ws >= 0:
@@ -242,7 +240,7 @@ func (m Model) clickPanes(msg tea.MouseMsg, bx, by, cw, bodyH int) (Model, tea.C
 		}
 		switch {
 		case wheel && id == chatPane:
-			m = m.moveSelection(map[bool]int{true: -1, false: 1}[up])
+			m = m.scrollBy(map[bool]int{true: 3, false: -3}[up])
 		case wheel:
 			t.Focus = id
 			step := 3

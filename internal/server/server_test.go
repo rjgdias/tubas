@@ -172,6 +172,7 @@ func TestSessionsSurviveARestart(t *testing.T) {
 	s.Stop()
 
 	again := New(Options{TeamDir: dir, Engine: engine.FakeEngine{}, Load: func() (team.Team, error) { return team.Load(dir) }})
+	t.Cleanup(again.Close) // its session saves when it ends: before the folder goes
 	st := again.Status()
 	if len(st.Sessions) != 1 || st.Sessions[0].Summary != "feito" || st.Sessions[0].ID != info.ID {
 		t.Fatalf("the session should come back: %+v", st.Sessions)

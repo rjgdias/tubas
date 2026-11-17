@@ -42,5 +42,8 @@ func findTeam(dir string) string {
 		}
 		fmt.Fprintf(os.Stderr, "tubas: no team here, so this is your personal team (%s) · tubas init makes one for a project\n", personal)
 	}
+	if team.MigratePersonal(personal) {
+		fmt.Fprintln(os.Stderr, "tubas: your personal team is now a plain chat with one assistant (/agents adds teammates)")
+	}
 	return personal
 }

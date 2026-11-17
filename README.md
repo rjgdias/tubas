@@ -1,8 +1,9 @@
 # tubas
 
-A team of AI agents, and every agent CLI you use, in one terminal app.
+A chat with AI in your terminal that grows into a team of agents, and every agent CLI you use, in one app.
 
-- **Your team:** agents with a role, a model and their own tools hand work to each other with @mentions. You follow it all in a quiet chat and approve anything that touches the real world. Each agent runs on the harness you pick: Claude Code, Codex, any ACP agent (opencode, gemini, goose…), or tubas's own loop straight on a provider's API (DeepSeek, GLM, Kimi, Qwen, OpenRouter, a local Ollama).
+- **Just talk:** type `tubas` and ask. It starts as a plain chat with one assistant, on the model and provider your Claude settings already use (your company's gateway included). `/model` lists every model your provider serves.
+- **Your team, when you want one:** agents with a role, a model and their own tools hand work to each other with @mentions. You follow it all in a quiet chat and approve anything that touches the real world. Each agent runs on the harness you pick: Claude Code, Codex, any ACP agent (opencode, gemini, goose…), or tubas's own loop straight on a provider's API (DeepSeek, GLM, Kimi, Qwen, OpenRouter, a local Ollama).
 - **Every other agent:** claude, codex, gemini or any command runs in a real terminal pane next to the chat, in its own git worktree if you want, with its state (blocked, working, done) always in sight.
 - **It keeps working when you leave:** a background server holds the sessions, routines and panes. Close the window and come back later, from any terminal, by typing `tubas`.
 
@@ -10,7 +11,9 @@ It is easy to use, everything has a screen (no file needs editing by hand), and 
 
 The name comes from the whale shark (*tubarão-baleia*): the biggest fish in the sea, always swimming with a school around it. Its mascot is the tubaleia, half shark and half whale shark.
 
-![The start screen](docs/start.png)
+![A plain chat: the whole answer, rendered](docs/chat.png)
+
+![/model lists what your company gateway serves](docs/model.png)
 
 ![Panes: claude waiting for an answer, a shell, tabs in the sidebar](docs/panes.png)
 
@@ -29,6 +32,16 @@ That puts `tubas` in Go's bin folder (`~/go/bin`), which the Go installer adds t
 - `tubas init DIR` makes a new team for a project.
 
 ## Quick start
+
+Type `tubas` anywhere and ask something. That's it: your personal tubas is a chat with one assistant.
+
+- The whole answer shows, with headings, lists, code and tables; `pgup` `pgdown` (or the wheel) scroll back.
+- Keep typing to continue the same conversation. `/new` (or `ctrl+n`) starts another; `ctrl+g` lists them all.
+- `/model` (or `ctrl+o`) picks the model: Claude's, or every one your company gateway serves. Type to filter, `enter` to pick.
+- `/agents` adds a teammate (an analyst, an engineer, a reviewer…). With two or more, they hand work to each other with @mentions and you see who does what.
+- Type `/` to see every command, `?` for the keys.
+
+### An example team
 
 From this repository's folder, open the example team, a data team over a synthetic delivery database:
 
@@ -190,15 +203,18 @@ Every change is a form: `↑↓` moves, `←→` picks an option, letters type, 
 
 | Key | What it does |
 | --- | --- |
-| `text`, `enter` | ask; `@agent` anywhere picks who answers, `@todos` asks everyone (`tab` completes) |
+| `text`, `enter` | ask, or continue the conversation; in a team, `@agent` anywhere picks who answers, `@todos` asks everyone (`tab` completes) |
+| `/` | the commands: `/model`, `/new`, `/agents`, `/help` |
+| `pgup` `pgdown`, wheel | scroll the conversation |
+| `ctrl+o` | change the model (the same as `/model`) |
 | `y` / `n` | approve / deny what an agent wants to run |
 | `v` | see the full call before deciding; after a session that changed code, review it |
-| `↑` `↓`, `enter` | select a turn, expand or collapse it |
-| `tab` | grid of all agents side by side |
-| `esc` | back out one layer; stops the agents when nothing is open |
+| `↑` `↓` | scroll a plain chat; in a team, select a turn (`enter` expands or collapses it) |
+| `tab` | in a team, the grid of all agents side by side |
+| `esc` | back out one layer; stops the answer when nothing is open |
 | `ctrl+r` | run the last question again |
-| `ctrl+g` | all sessions, with their state |
-| `ctrl+n` | a new session; the one on screen keeps running |
+| `ctrl+g` | all conversations, with their state |
+| `ctrl+n` | a new conversation; the one on screen keeps running |
 | `ctrl+b` then `q` | detach: close the window, leave everything running |
 | `?` | keys panel |
 | `ctrl+c` | quit (in a terminal pane, it goes to the program) |
@@ -211,15 +227,15 @@ Almost everything you reach with a key, you can click. `tubas -mouse=false` leav
 
 | Click | What it does |
 | --- | --- |
-| a section in the top bar | opens it; the sessions count at the right opens the session list |
-| a workspace, tab or session in the sidebar | shows it (a session opens in the chat) |
-| `+ new tab`, `+ new session` in the sidebar | the same as `ctrl+b c` and `ctrl+n` |
+| a section in the top bar | opens it; the count at the right opens the conversation list |
+| a workspace, tab or conversation in the sidebar | shows it (a conversation opens in the chat) |
+| `+ new tab`, `+ new conversation` in the sidebar | the same as `ctrl+b c` and `ctrl+n` |
 | a pane | focuses it; drag over a terminal to select text, copied when you let go |
 | a pane's header, twice | zooms it, twice again to go back |
 | the `✕` in a pane's header | closes it (asks first while the program runs) |
 | the border between two panes | drag it to resize them |
 | `y` · `n` · `v` on an approval bar | approve · deny · details |
-| a row in the session list or in a section's list | shows or selects it |
+| a row in the conversation list or in a section's list | shows or selects it |
 
 The wheel scrolls a terminal's history or the chat.
 
@@ -227,7 +243,9 @@ The wheel scrolls a terminal's history or the chat.
 
 `tubas` starts a server for the team in the background (or finds the one already running), and the window attaches to it. Sessions, routines, approvals and panes live in the server, so closing the window, `ctrl+c` or `ctrl+b q` only detaches: agents keep working, routines keep running. Run `tubas` again to come back. Finished sessions are saved in `.tubas/sessions/`.
 
-Every session has a state, the same on screen and on the command line: **blocked** (waits for you), **working**, **done** (finished, not seen yet) and **idle** (seen). The top bar sums them up (`sessions 1 blocked · 2 working`), the sidebar lists them, and the inbox gathers what every session waits for, not only the one on screen.
+Each question you send is a session on the server; a follow-up is a new session in the same **conversation**, so the sidebar and `ctrl+g` list conversations (titled by their first question), not every message. Opening one replays it whole.
+
+Every session has a state, the same on screen and on the command line: **blocked** (waits for you), **working**, **done** (finished, not seen yet) and **idle** (seen). The top bar sums them up (`1 blocked · 2 working`), the sidebar lists the conversations with their state, and the inbox gathers what every session waits for, not only the one on screen.
 
 ![Sessions in the sidebar](docs/sessions.png)
 
@@ -393,7 +411,7 @@ Everything the window does, scripts and other agents can do too. Every command t
 | `tubas pane new [-repo api [-worktree]] [-title T] [-- command ...]` | opens a pane (JSON back, with its id) |
 | `tubas pane send ID "text" [-enter] [-key ctrl+c]` | types into a pane |
 | `tubas pane wait ID [-until blocked,idle,done]` | waits for a pane's state |
-| `tubas pane read ID` | a pane's screen as text |
+| `tubas pane read ID` | a pane's screen as text (`-color` keeps the colors) |
 | `tubas pane list [-json]`, `tubas pane close ID` | lists, closes |
 | `tubas stop` | stops the server and every session and pane (panes come back with it) |
 
@@ -435,7 +453,7 @@ Everything the window does, scripts and other agents can do too. Every command t
 A work setup usually names the provider in the `env` block of `~/.claude/settings.json` (a company gateway in `ANTHROPIC_BASE_URL`, Bedrock, Vertex, a proxy or CA certificate, a script that fetches the token). Isolation would drop it, so tubas reads your user settings and the team folder's `.claude/settings.json` and `settings.local.json` itself, the way [tucano](https://github.com/eduwxyz/tucano) does, and hands the agents the whole `env` block. The header says which one is in use: `claude · gateway llm.example.com`. Nothing to configure in tubas: it picks your company's setup up on its own.
 
 - **A token from a script.** When your settings fetch the key with an `apiKeyHelper`, claude gets it with `--settings`: it runs the script, sends the key, and runs it again when the gateway says 401. The api harness runs it itself (in sh, or Git Bash on Windows) and reuses the token for 5 minutes, or `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`.
-- **Your gateway's headers and model names.** `ANTHROPIC_CUSTOM_HEADERS` and `ANTHROPIC_DEFAULT_SONNET_MODEL` (and the opus and haiku ones) are passed on, so `model: sonnet` means whatever your gateway calls it. tubas also asks the gateway which models it serves (`/v1/models`): settings shows how many, and the agent form offers them.
+- **Your gateway's headers and model names.** `ANTHROPIC_CUSTOM_HEADERS` and `ANTHROPIC_DEFAULT_SONNET_MODEL` (and the opus and haiku ones) are passed on, so `model: sonnet` means whatever your gateway calls it. tubas also asks the gateway which models it serves (`/v1/models`, then `/models`), as tucano does: `/model` lists them all, next to the short names your settings map (`sonnet → acme-claude-sonnet`); a short name your settings don't map is left out, since the gateway would not know it. When the list can't be fetched, `/model` says why, and you can still type a model name.
 - **Quiet behind a gateway.** Claude Code's telemetry and error reports are off (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`): company networks often block them.
 - **Your setup, not someone else's session.** When tubas itself runs inside a Claude Code session (the desktop app, its terminal), the variables of that session stay out of the agents, so they use your provider, not that session's login.
 - **CLIs where installers put them.** `~/.local/bin`, `%APPDATA%\npm` and the like are searched, and on Linux and macOS the PATH of your login shell, so claude, codex or opencode are found even when tubas starts without your shell.

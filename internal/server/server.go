@@ -60,6 +60,10 @@ type Info struct {
 	Events   int       `json:"events"`
 
 	Worktrees []repo.Worktree `json:"worktrees,omitempty"` // where its agents changed code
+
+	// Conversation groups a question with its follow-ups: the first
+	// session's id. The screen lists conversations, not every message.
+	Conversation string `json:"conversation,omitempty"`
 }
 
 // Pending is an approval waiting for you, in any session.
@@ -112,6 +116,8 @@ type StartRequest struct {
 	Everyone bool   `json:"everyone,omitempty"`
 	Context  string `json:"context,omitempty"`
 	Title    string `json:"title,omitempty"`
+	// Conversation, for a follow-up: the conversation it continues.
+	Conversation string `json:"conversation,omitempty"`
 }
 
 // Options say how the server runs agents.
@@ -247,6 +253,10 @@ func (s *Server) start(req StartRequest, kind, routineName string, retry bool) (
 	ss := &session{Info: Info{ID: "s" + strconv.Itoa(s.nextID), Title: title, Kind: kind, Routine: routineName,
 		Target: req.Target, Question: req.Question, Created: time.Now(), Updated: time.Now()},
 		pending: map[string]Pending{}, replies: map[string]chan<- bool{}, cancel: cancel, running: true, retry: retry}
+	ss.Conversation = req.Conversation
+	if ss.Conversation == "" {
+		ss.Conversation = ss.ID // a new conversation starts with it
+	}
 	repos, specs := repoSpecs(t)
 	ss.code = repo.NewSet(t.Dir, ss.ID, title, specs)
 	s.sessions[ss.ID] = ss
@@ -831,13 +841,14 @@ func shortTitle(q string) string {
 			q = rest
 		}
 	}
-	words := strings.Fields(q)
-	if len(words) > 6 {
-		words = words[:6]
-	}
-	t := strings.Join(words, " ")
+	// The whole question when it fits; else cut at a word, with "…".
+	t := strings.Join(strings.Fields(q), " ")
 	if r := []rune(t); len(r) > 40 {
-		t = string(r[:40]) + "…"
+		cut := string(r[:40])
+		if i := strings.LastIndex(cut, " "); i > 20 {
+			cut = cut[:i]
+		}
+		t = strings.TrimRight(cut, " ,.;:") + "…"
 	}
 	return t
 }

@@ -187,7 +187,15 @@ func (m Model) modelsFor(harness, provider, current string) []string {
 	var models []string
 	switch {
 	case (harness == "claude" || harness == "") && (provider == "anthropic" || provider == ""):
-		models = append(slices.Clone(modelNames), m.cfg.Providers["anthropic"]...) // and your gateway's own
+		// Claude's short names, then your gateway's own. A gateway serves
+		// its own names: a short name only works when your settings map it
+		// (ANTHROPIC_DEFAULT_SONNET_MODEL…), so only those are listed.
+		for _, alias := range modelNames {
+			if !m.onGateway || m.aliases[alias] != "" {
+				models = append(models, alias)
+			}
+		}
+		models = append(models, m.cfg.Providers["anthropic"]...)
 	case harness == "claude" || harness == "api":
 		models = append([]string{""}, m.cfg.Providers[provider]...)
 	default: // codex and ACP agents choose in their own settings

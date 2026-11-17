@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,6 +92,10 @@ func writeAtomic(path, content string) error {
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		os.Remove(tmp.Name())
+		var link *os.LinkError
+		if errors.As(err, &link) {
+			err = link.Err // the reason; the paths are long and say little
+		}
 		return fmt.Errorf("saving %s: %w", filepath.Base(path), err)
 	}
 	return nil
