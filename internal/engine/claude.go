@@ -175,10 +175,13 @@ func (c ClaudeEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- E
 	}
 
 	// CommandContext kills the process if ctx is cancelled (esc, r, q).
-	cmd := exec.CommandContext(ctx, command, args...)
+	// Only the options this claude knows (an older one stops at the first
+	// it doesn't), with your apiKeyHelper and your provider's environment.
+	cmd, err := ClaudeCmd(ctx, command, args, provider)
+	if err != nil {
+		return Reply{}, err
+	}
 	cmd.Dir = dir
-	cmd.Args = append(cmd.Args, provider.SettingsArgs()...) // your apiKeyHelper, run by claude
-	cmd.Env = provider.Environ()
 	cmd.Stdin = strings.NewReader(req.Prompt)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

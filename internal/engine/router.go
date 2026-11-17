@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -96,14 +95,15 @@ func (r ClaudeRouter) Route(ctx context.Context, question, earlier string, candi
 	if model == "" {
 		model = "haiku"
 	}
-	cmd := exec.CommandContext(ctx, r.Command, "-p",
+	cmd, err := ClaudeCmd(ctx, r.Command, []string{"-p",
 		"--output-format", "json", "--model", model,
 		"--system-prompt", routerSystem, "--json-schema", routerSchema,
 		"--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands",
-		"--no-session-persistence")
+		"--no-session-persistence"}, r.Provider)
+	if err != nil {
+		return RouteDecision{}, fmt.Errorf("router: %w", err)
+	}
 	cmd.Dir = r.WorkDir
-	cmd.Args = append(cmd.Args, r.Provider.SettingsArgs()...)
-	cmd.Env = r.Provider.Environ()
 	cmd.Stdin = strings.NewReader(in.String())
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

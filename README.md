@@ -51,6 +51,8 @@ It checks, one step at a time, how agents reach a model on this computer: Claude
 
 While an answer is coming, the chat says when the provider is failing (`⟳ the provider failed (500) · trying again, 3 of 10`) instead of a silent "working": Claude Code retries a failing gateway for minutes. A key the gateway refuses twice stops the turn at once and says to check your token script, and a failure shows its whole reason.
 
+An older Claude Code works too: tubas reads `claude --help` and leaves out the options that version doesn't know (it stops at the first one otherwise), the closest older way when there is one: `--disallowedTools` for `--tools ""`, and your token script run by tubas when there is no `--settings`. `tubas doctor` names what is missing; `claude update` brings it.
+
 ### An example team
 
 From this repository's folder, open the example team, a data team over a synthetic delivery database:

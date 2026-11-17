@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -129,11 +128,12 @@ func runSenior(ctx context.Context, model, prompt string) (string, float64, erro
 		return "", 0, err
 	}
 	wd, _ := os.Getwd()
-	cmd := exec.CommandContext(ctx, command, "-p", "--output-format", "json", "--model", model,
-		"--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands", "--no-session-persistence")
-	provider := engine.FindProvider(wd)
-	cmd.Args = append(cmd.Args, provider.SettingsArgs()...)
-	cmd.Env = provider.Environ()
+	cmd, err := engine.ClaudeCmd(ctx, command, []string{"-p", "--output-format", "json", "--model", model,
+		"--tools", "", "--strict-mcp-config", "--setting-sources", "", "--disable-slash-commands", "--no-session-persistence"},
+		engine.FindProvider(wd))
+	if err != nil {
+		return "", 0, err
+	}
 	cmd.Stdin = strings.NewReader(prompt)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

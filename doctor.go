@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -50,6 +51,14 @@ func runDoctor(args []string) {
 			version = strings.TrimSpace(string(out))
 		}
 		fmt.Println(ok + claude + " · " + version)
+		if missing := engine.MissingFlags(claude); len(missing) > 0 {
+			fmt.Println("  ! an older version: it doesn't know " + strings.Join(missing, ", "))
+			why := "tubas works around it"
+			if slices.Contains(missing, "--setting-sources") {
+				why += ", but agents also get your CLAUDE.md and hooks"
+			}
+			fmt.Println("    " + why + " · claude update brings the new options")
+		}
 	}
 
 	// 2. Settings: where the model is.
