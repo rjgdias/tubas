@@ -125,7 +125,7 @@ func TestClickSessionsInTheSidebar(t *testing.T) {
 	if m.picker || m.remoteID != ids[1] {
 		t.Errorf("a click on a picker row shows that session: %q", m.remoteID)
 	}
-	if !strings.Contains(frame, "+ new tab") {
-		t.Error("the sidebar offers a new tab")
+	if strings.Contains(frame, "+ new tab") {
+		t.Error("just chatting, the sidebar shows the conversations, not the workspace tree")
 	}
 }

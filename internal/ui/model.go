@@ -159,6 +159,7 @@ type Model struct {
 	modelPick   *modelPicker // /model, while open
 	gatewayNote string       // why the gateway's models are missing, when they are
 	mcp         *mcpView     // /mcp: the MCP servers, open over the chat
+	deleting    string       // a conversation waiting for y to be deleted
 	// aliases are what your Claude settings make sonnet, opus and haiku
 	// mean; with a gateway that lists its models, only those show.
 	aliases     map[string]string
@@ -410,6 +411,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mcpProbedMsg:
 		return m.mcpProbed(msg), nil
 
+	case conversationDeletedMsg:
+		return m.conversationDeleted(msg)
+
 	case providersMsg:
 		m.providers = msg
 		m.gatewayNote = ""
@@ -505,6 +509,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// A terminal pane has the keys: everything goes to it but ctrl+b
 	// (and alt+1…7, tubas's sections).
+	if m.panes != nil && m.panes.closingWS != nil && m.form == nil {
+		ws := m.panes.closingWS
+		m.panes.closingWS, m.notice = nil, ""
+		if key == "y" {
+			return m.closeWorkspace(ws)
+		}
+		return m, nil
+	}
+	// A conversation waiting for y (or d again) to be deleted.
+	if m.deleting != "" {
+		id := m.deleting
+		m.deleting, m.notice = "", ""
+		if key == "y" || key == "d" {
+			return m.deleteConversation(id)
+		}
+		if m.picker {
+			return m, nil // the key only said no; the list stays
+		}
+	}
 	if m.panes != nil && m.panes.closing != "" && m.form == nil {
 		id := m.panes.closing
 		m.panes.closing, m.notice = "", ""

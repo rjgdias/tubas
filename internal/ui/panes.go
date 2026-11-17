@@ -34,14 +34,15 @@ type paneState struct {
 	ws      int
 	sidebar *bool // nil: shown by itself when there is room
 
-	infos    map[string]pane.Info
-	screens  map[string]pane.Screen
-	watching map[string]bool
-	sizes    map[string][2]int // the size last sent to each pane
-	gone     map[string]bool   // closed here: ignore it if a late list still has it
-	seen     map[string]bool   // panes told they were looked at, until their state changes
-	closing  string            // the pane waiting for y to close
-	keys     chan keyJob
+	infos     map[string]pane.Info
+	screens   map[string]pane.Screen
+	watching  map[string]bool
+	sizes     map[string][2]int // the size last sent to each pane
+	gone      map[string]bool   // closed here: ignore it if a late list still has it
+	seen      map[string]bool   // panes told they were looked at, until their state changes
+	closing   string            // the pane waiting for y to close
+	closingWS *workspace        // the workspace waiting for y to close
+	keys      chan keyJob
 
 	copy *copyState // scrolling back through a pane (copymode.go)
 	sel  *selection // text being selected with the mouse
@@ -468,6 +469,19 @@ func (m Model) paneKey(key string) (Model, tea.Cmd, bool) {
 	case "N":
 		m.section = SecChat
 		return m.newWorkspaceForm(), nil, true
+	case "X":
+		if !ws.Own {
+			m.notice = dimStyle.Render("the team's workspace stays (the chat lives there) · ctrl+b X closes one you made")
+			return m, nil, true
+		}
+		ps.closingWS = ws
+		n := 0
+		for _, t := range ws.Tabs {
+			n += len(t.Root.leaves())
+		}
+		m.notice = warnStyle.Render("close the workspace "+ws.Name+" and its "+plural(n, "terminal")+"?") +
+			dimStyle.Render(" y closes it · any other key keeps it")
+		return m, nil, true
 	case "w":
 		ps.ws = (ps.ws + 1) % len(ps.spaces)
 		m.section = SecChat
@@ -562,6 +576,32 @@ func (m Model) closePane(id string) Model {
 	delete(ps.infos, id)
 	m.notice = ""
 	return m
+}
+
+// closeWorkspace stops a workspace's terminals and takes it off the
+// sidebar.
+func (m Model) closeWorkspace(ws *workspace) (Model, tea.Cmd) {
+	ps := m.panes
+	var cmds []tea.Cmd
+	for _, t := range ws.Tabs {
+		for _, id := range t.Root.leaves() {
+			if id != chatPane {
+				m = m.closePane(id)
+				host := ps.host
+				pid := id
+				cmds = append(cmds, func() tea.Msg { host.Close(pid); return nil })
+			}
+		}
+	}
+	for i, s := range ps.spaces {
+		if s == ws {
+			ps.spaces = append(ps.spaces[:i:i], ps.spaces[i+1:]...)
+			break
+		}
+	}
+	ps.ws = 0
+	m.notice = okStyle.Render("✓ closed the workspace " + ws.Name)
+	return m, tea.Batch(append(cmds, ps.saveLayout())...)
 }
 
 func (m Model) closePaneCmd(id string) tea.Cmd {

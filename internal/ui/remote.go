@@ -289,12 +289,55 @@ func (m Model) pickerKey(key string) (Model, tea.Cmd) {
 		if m.pickIdx < len(list) {
 			return m.attachConversation(list[m.pickIdx])
 		}
+	case "d", "delete", "x":
+		if m.pickIdx < len(list) {
+			return m.askDelete(list[m.pickIdx]), nil
+		}
 	}
 	return m, nil
 }
 
+// askDelete asks before deleting a conversation: y (or d again) does it.
+func (m Model) askDelete(c conversation) Model {
+	m.deleting = c.ID
+	m.notice = warnStyle.Render("delete "+fit(c.Title, 30)+" ("+plural(len(c.Sessions), "message")+")?") +
+		dimStyle.Render(" y deletes it for good · any other key keeps it")
+	return m
+}
+
+type conversationDeletedMsg struct {
+	id  string
+	err error
+}
+
+// deleteConversation removes a conversation on the server.
+func (m Model) deleteConversation(id string) (Model, tea.Cmd) {
+	if m.cfg.Remote == nil {
+		return m, nil
+	}
+	c := m.cfg.Remote
+	return m, func() tea.Msg { return conversationDeletedMsg{id, c.DeleteConversation(id)} }
+}
+
+func (m Model) conversationDeleted(msg conversationDeletedMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		m.notice = badStyle.Render("could not delete: " + msg.err.Error())
+		return m, nil
+	}
+	if msg.id == m.conversation {
+		picker := m.picker
+		m = m.newSession() // it was on screen: a clean chat instead
+		m.picker = picker
+	}
+	if n := len(m.conversations()) - 1; m.pickIdx >= n {
+		m.pickIdx = max(0, n-1)
+	}
+	m.notice = okStyle.Render("✓ conversation deleted")
+	return m, pollStatus(m.cfg.Remote)
+}
+
 func (m Model) viewPicker(cw, h int) []string {
-	lines := []string{boldStyle.Render("conversations") + dimStyle.Render(" · enter shows one · ctrl+n starts a new one"), ""}
+	lines := []string{boldStyle.Render("conversations") + dimStyle.Render(" · enter shows one · d deletes · ctrl+n starts a new one"), ""}
 	list := m.conversations()
 	if len(list) == 0 {
 		return fitHeight(append(lines, dimStyle.Render("none yet · ask something and it becomes one")), h, false)

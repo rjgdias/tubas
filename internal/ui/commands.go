@@ -34,7 +34,8 @@ type command struct {
 
 var baseCommands = []command{
 	{name: "new", aliases: []string{"clear"}, desc: "start a new conversation"},
-	{name: "conversations", aliases: []string{"resume"}, desc: "your conversations (ctrl+g)"},
+	{name: "conversations", aliases: []string{"resume"}, desc: "your conversations (ctrl+g) · d deletes one"},
+	{name: "delete", desc: "delete this conversation"},
 	{name: "retry", desc: "ask the last question again"},
 	{name: "stop", desc: "stop the answer that is coming (esc)"},
 	{name: "copy", desc: "copy the last answer"},
@@ -165,6 +166,18 @@ func (m Model) runCommand(name, arg string) (Model, tea.Cmd) {
 		}
 		m.picker, m.pickIdx = true, 0
 		return m, pollStatus(m.cfg.Remote)
+	case "delete":
+		if m.cfg.Remote == nil || m.conversation == "" {
+			m.notice = dimStyle.Render("nothing to delete: this conversation has no messages yet")
+			return m, nil
+		}
+		for _, c := range m.conversations() {
+			if c.ID == m.conversation {
+				return m.askDelete(c), nil
+			}
+		}
+		m.notice = dimStyle.Render("nothing to delete yet")
+		return m, nil
 	case "retry":
 		switch {
 		case m.running:

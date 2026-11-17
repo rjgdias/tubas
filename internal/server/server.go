@@ -140,6 +140,7 @@ type session struct {
 	seen    bool
 	retry   bool
 	code    *repo.Set
+	deleted bool // you deleted it: an answer that ends later is not saved
 }
 
 // Server keeps the team's sessions and routines.
@@ -353,6 +354,39 @@ func (s *Server) Cancel(id string) error {
 	}
 	ss.cancel()
 	return nil
+}
+
+// DeleteConversation removes a conversation: every session in it, from
+// the screen and from disk. One still running is stopped first.
+func (s *Server) DeleteConversation(id string) (int, error) {
+	s.mu.Lock()
+	var gone []string
+	for sid, ss := range s.sessions {
+		conv := ss.Conversation
+		if conv == "" {
+			conv = ss.ID
+		}
+		if conv != id || ss.Kind == "routine" {
+			continue
+		}
+		ss.deleted = true
+		if ss.running {
+			ss.cancel()
+		}
+		delete(s.sessions, sid)
+		gone = append(gone, sid)
+	}
+	if len(gone) > 0 {
+		s.notify()
+	}
+	s.mu.Unlock()
+	if len(gone) == 0 {
+		return 0, fmt.Errorf("no conversation %s", id)
+	}
+	for _, sid := range gone {
+		os.Remove(filepath.Join(s.dir(), "sessions", sid+".json"))
+	}
+	return len(gone), nil
 }
 
 // Seen marks a session as looked at: done becomes idle.
@@ -591,6 +625,10 @@ type saved struct {
 // save writes a finished session, so a restart brings it back.
 func (s *Server) save(ss *session) {
 	s.mu.Lock()
+	if ss.deleted {
+		s.mu.Unlock()
+		return
+	}
 	rec := saved{Info: ss.info(), Events: compact(ss.events)}
 	s.mu.Unlock()
 	dir := filepath.Join(s.dir(), "sessions")
@@ -805,6 +843,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /routines/{name}/run", func(w http.ResponseWriter, r *http.Request) {
 		info, err := s.RunRoutine(r.PathValue("name"))
 		reply(w, info, err)
+	})
+	mux.HandleFunc("DELETE /conversations/{id}", func(w http.ResponseWriter, r *http.Request) {
+		n, err := s.DeleteConversation(r.PathValue("id"))
+		reply(w, map[string]int{"deleted": n}, err)
 	})
 	mux.HandleFunc("DELETE /notes/{id}", func(w http.ResponseWriter, r *http.Request) {
 		s.DismissNote(r.PathValue("id"))

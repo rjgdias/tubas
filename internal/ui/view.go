@@ -884,6 +884,7 @@ func (m Model) withHelp(base []string, cw int) []string {
 		{},
 		{"commands", "/", "every command, filtered as you type"},
 		{"", "/new /retry", "new conversation · ask again"},
+		{"", "/delete", "delete this conversation (ctrl+g, d: another)"},
 		{"", "/copy /export", "copy the answer · save as Markdown"},
 		{"", "/model /usage", "change the model · what it cost"},
 		{"", "/mcp /skills", "tools · skills (/name runs a skill)"},

@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"tubas/internal/engine"
+	"tubas/internal/server"
 )
 
 func TestSlashAgentsOpensTheForm(t *testing.T) {
@@ -95,5 +96,70 @@ func TestTheCommandMenu(t *testing.T) {
 	m = m.export("")
 	if !strings.Contains(m.notice, "nothing to export") {
 		t.Errorf("an empty conversation has nothing to export: %q", m.notice)
+	}
+}
+
+func TestDeletingConversationsFromTheList(t *testing.T) {
+	scripts := map[string]engine.Script{"leo": {Summary: "feito"}}
+	m, _, c := remoteModel(t, scripts)
+	m = feed(m, tea.WindowSizeMsg{Width: 140, Height: 32})
+	t.Cleanup(m.Stop)
+	var ids []string
+	for _, q := range []string{"@leo primeira", "@leo segunda"} {
+		info, err := c.Start(server.StartRequest{Target: "leo", Question: q})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Wait(info.ID, []string{server.Done}, 5*time.Second)
+		ids = append(ids, info.ID)
+	}
+	m = feed(m, status(t, c))
+	m = m.PressKeys("ctrl+g")
+	if !m.picker || len(m.conversations()) != 2 {
+		t.Fatalf("ctrl+g lists two conversations: %d", len(m.conversations()))
+	}
+	m = m.PressKeys("d") // the newest, first in the list
+	if m.deleting == "" || !strings.Contains(ansi.Strip(m.notice), "delete") {
+		t.Fatalf("d asks first: %q", m.notice)
+	}
+	m = m.PressKeys("n") // no: it stays
+	if m.deleting != "" || !m.picker {
+		t.Fatal("any other key keeps it, and the list stays open")
+	}
+	// d then y: the delete runs (here by hand: PressKeys drops commands).
+	m = m.PressKeys("d")
+	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if cmd == nil {
+		t.Fatal("y deletes")
+	}
+	m = feed(next.(Model), cmd())
+	m = feed(m, status(t, c))
+	if strings.Contains(m.notice, "could not") {
+		t.Fatal(m.notice)
+	}
+	next = m
+	if got := next.(Model).conversations(); len(got) != 1 || got[0].ID != ids[0] {
+		t.Errorf("one conversation is left: %+v", got)
+	}
+}
+
+func TestPlainChatSidebarHasNoWorkspaceTree(t *testing.T) {
+	m, _ := paneModelSized(t, 140, 30, nil)
+	m, _ = m.panesLoaded(panesLoadedMsg{})
+	if !m.onlyChat() {
+		t.Fatal("no terminal open: only the chat")
+	}
+	lines, _ := m.sidebarLines(sidebarW, 20)
+	text := ansi.Strip(strings.Join(lines, "\n"))
+	if strings.Contains(text, "1 chat") || strings.Contains(text, "new tab") {
+		t.Errorf("just chatting, the sidebar has no workspace tree:\n%s", text)
+	}
+	m = openPane(t, m, "v")
+	if m.onlyChat() {
+		t.Error("with a terminal open, the tree is back")
+	}
+	m = m.PressKeys("ctrl+b", "X")
+	if !strings.Contains(ansi.Strip(m.notice), "team's workspace stays") {
+		t.Errorf("the team's workspace can't be closed: %q", m.notice)
 	}
 }

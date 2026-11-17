@@ -225,6 +225,13 @@ func (m Model) sidebarShown() bool {
 	return (ps.terminals() > 0 || sessions) && m.width-2 >= 110
 }
 
+// onlyChat: the team's workspace with its one chat tab and no terminal,
+// the plain chat most people use.
+func (m Model) onlyChat() bool {
+	ps := m.panes
+	return ps != nil && len(ps.spaces) == 1 && len(ps.spaces[0].Tabs) == 1 && ps.terminals() == 0
+}
+
 // tabBarShown: without the sidebar, a line of tabs when there are several.
 func (m Model) tabBarShown() bool {
 	return !m.sidebarShown() && len(m.panes.space().Tabs) > 1
@@ -273,7 +280,13 @@ func (m Model) sidebarLines(w, h int) ([]string, []sideRow) {
 	ps := m.panes
 	var lines []string
 	var rows []sideRow
-	for wi, ws := range ps.spaces {
+	// Just chatting (the team's workspace, its one chat tab, no terminal):
+	// the tree says nothing, only the conversations show.
+	spaces := ps.spaces
+	if m.onlyChat() {
+		spaces = nil
+	}
+	for wi, ws := range spaces {
 		var ids []string
 		for _, t := range ws.Tabs {
 			ids = append(ids, t.Root.leaves()...)
@@ -308,8 +321,11 @@ func (m Model) sidebarLines(w, h int) ([]string, []sideRow) {
 	}
 	// Your conversations, on the server: click one to show it in the chat.
 	if convs := m.conversations(); m.cfg.Remote != nil && len(convs) > 0 {
-		lines = append(lines, "", " "+faintStyle.Render("conversations"))
-		rows = append(rows, nothing, nothing)
+		if len(spaces) > 0 {
+			lines, rows = append(lines, ""), append(rows, nothing)
+		}
+		lines = append(lines, " "+faintStyle.Render("conversations"))
+		rows = append(rows, nothing)
 		for _, c := range convs {
 			label := fit(c.Title, w-6)
 			line := "   " + dimStyle.Render(label)
@@ -333,7 +349,11 @@ func (m Model) sidebarLines(w, h int) ([]string, []sideRow) {
 	if len(lines) >= h {
 		lines, rows = lines[:h-1], rows[:h-1]
 	}
-	lines = append(lines, faintStyle.Render(" ctrl+b b hide · w next"))
+	hint := " ctrl+b b hide · w next"
+	if m.onlyChat() {
+		hint = " ctrl+g d deletes · b hide"
+	}
+	lines = append(lines, faintStyle.Render(hint))
 	rows = append(rows, sideRow{ws: -1, tab: -1, action: "hide"})
 	for i := range lines {
 		lines[i] = cell(lines[i], w)

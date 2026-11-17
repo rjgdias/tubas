@@ -223,7 +223,8 @@ Type `/` in the chat: every command, with what it does, filtered as you type (by
 | Command | What it does |
 | --- | --- |
 | `/new` (`/clear`) | a new conversation; the one on screen keeps running |
-| `/conversations` (`/resume`) | your conversations, with their state (`ctrl+g`) |
+| `/conversations` (`/resume`) | your conversations, with their state (`ctrl+g`); `d` deletes one |
+| `/delete` | delete the conversation on screen (it asks first) |
 | `/retry` · `/stop` | ask the last question again · stop the answer that is coming |
 | `/copy` | copy the last answer |
 | `/export [file]` | save the conversation as Markdown, in the folder you are in |
@@ -282,7 +283,7 @@ The wheel scrolls a terminal's history or the chat.
 
 `tubas` starts a server for the team in the background (or finds the one already running), and the window attaches to it. Sessions, routines, approvals and panes live in the server, so closing the window, `ctrl+c` or `ctrl+b q` only detaches: agents keep working, routines keep running. Run `tubas` again to come back. Finished sessions are saved in `.tubas/sessions/`.
 
-Each question you send is a session on the server; a follow-up is a new session in the same **conversation**, so the sidebar and `ctrl+g` list conversations (titled by their first question), not every message. Opening one replays it whole.
+Each question you send is a session on the server; a follow-up is a new session in the same **conversation**, so the sidebar and `ctrl+g` list conversations (titled by their first question), not every message. Opening one replays it whole. `d` in the list (or `/delete` for the one on screen) deletes a conversation for good, from the screen and from `.tubas/sessions/`, after asking; one still answering is stopped first.
 
 Every session has a state, the same on screen and on the command line: **blocked** (waits for you), **working**, **done** (finished, not seen yet) and **idle** (seen). The top bar sums them up (`1 blocked · 2 working`), the sidebar lists the conversations with their state, and the inbox gathers what every session waits for, not only the one on screen.
 
@@ -324,6 +325,7 @@ Not every agent is a tubas agent. A pane is a real terminal inside tubas: claude
 | `ctrl+b` then `n` / `p`, `1`…`9` | next / previous tab, tab by number |
 | `ctrl+b` then `w` | the next workspace |
 | `ctrl+b` then `N` | a new workspace, for any folder |
+| `ctrl+b` then `X` | close a workspace you made, and its terminals (it asks first; the team's own stays, the chat lives there) |
 | `ctrl+b` then `b` | show or hide the sidebar |
 | `ctrl+b` then `z` | zoom the focused pane, again to go back |
 | `ctrl+b` then `[` | scroll back through the pane (copy mode) |
@@ -335,7 +337,7 @@ The new pane menu asks what to run (your shell, an agent CLI found on this compu
 
 Keys go to the focused pane, `ctrl+c` included; tubas keeps only `ctrl+b` and `alt+1…7`. The chat is a pane too: move to it and type as usual.
 
-**The sidebar** lists every workspace and its tabs with the state of what runs inside, and the team's sessions below them, so nothing waiting for you is out of sight. It shows up by itself once there are panes or a few sessions and the window is wide enough; `ctrl+b b` decides. Without it, a line of tabs sits above the panes.
+**The sidebar** lists every workspace and its tabs with the state of what runs inside, and the team's conversations below them, so nothing waiting for you is out of sight. While you only chat (no terminal, no workspace of yours), it lists just the conversations. It shows up by itself once there are panes or a few sessions and the window is wide enough; `ctrl+b b` decides. Without it, a line of tabs sits above the panes.
 
 **Copy mode** (`ctrl+b [` or the wheel) shows what the pane printed, 5000 lines back: `h` `j` `k` `l`, `w` `b`, `0` `$`, `g` `G`, `pgup` `pgdown` move; `/` searches back (`n` again, `N` forward); `v` starts a selection; `y` or `enter` copies it, or the line under the cursor; `q` goes back to the live terminal.
 

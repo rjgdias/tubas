@@ -292,3 +292,40 @@ func TestNotifiesWhenNobodyLooks(t *testing.T) {
 		t.Fatalf("a blocked pane should notify once when no window is open: %q", got)
 	}
 }
+
+func TestDeletingAConversation(t *testing.T) {
+	s, c, dir := testServer(t, map[string]engine.Script{"leo": {Summary: "feito"}})
+	first, _ := c.Start(StartRequest{Target: "leo", Question: "um"})
+	c.Wait(first.ID, []string{Done}, 5*time.Second)
+	follow, _ := c.Start(StartRequest{Target: "leo", Question: "dois", Conversation: first.Conversation})
+	c.Wait(follow.ID, []string{Done}, 5*time.Second)
+	other, _ := c.Start(StartRequest{Target: "leo", Question: "outra"})
+	c.Wait(other.ID, []string{Done}, 5*time.Second)
+	for i := 0; i < 200; i++ { // all three saved
+		if files, _ := filepath.Glob(filepath.Join(dir, ".tubas", "sessions", "*.json")); len(files) == 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := c.DeleteConversation(first.Conversation); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := c.Status()
+	if len(st.Sessions) != 1 || st.Sessions[0].ID != other.ID {
+		t.Errorf("only the other conversation is left: %+v", st.Sessions)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, ".tubas", "sessions", "*.json"))
+	if len(files) != 1 {
+		t.Errorf("its files are gone from disk too: %v", files)
+	}
+	s.Stop()
+	again := New(Options{TeamDir: dir, Engine: engine.FakeEngine{}, Load: func() (team.Team, error) { return team.Load(dir) }})
+	t.Cleanup(again.Close)
+	if st := again.Status(); len(st.Sessions) != 1 {
+		t.Errorf("a restart doesn't bring it back: %d sessions", len(st.Sessions))
+	}
+	if err := c.DeleteConversation("nope"); err == nil {
+		t.Error("an unknown conversation is an error")
+	}
+}
