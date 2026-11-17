@@ -124,6 +124,9 @@ func main() {
 		if c, _, err := server.Ensure(t.Dir, exe, serveArgs...); err == nil {
 			c.Window = true
 			cfg.Remote = c
+			if c.Outdated {
+				cfg.Notice = "tubas was updated, but the background server still runs the old one (something is running in it) · tubas stop, then tubas"
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "tubas: %v · running in this window only\n", err)
 		}

@@ -647,6 +647,7 @@ type File struct {
 	Token   string    `json:"token"`
 	PID     int       `json:"pid"`
 	Started time.Time `json:"started"`
+	Build   string    `json:"build,omitempty"` // which tubas binary runs it: see Build
 }
 
 // FilePath is where a team's server.json lives.
@@ -662,7 +663,7 @@ func (s *Server) Run(ctx context.Context) error {
 	rand.Read(secret)
 	s.token = hex.EncodeToString(secret)
 	srv := &http.Server{Handler: s.Handler()}
-	f := File{URL: "http://" + ln.Addr().String(), Token: s.token, PID: os.Getpid(), Started: s.started}
+	f := File{URL: "http://" + ln.Addr().String(), Token: s.token, PID: os.Getpid(), Started: s.started, Build: Build()}
 	os.MkdirAll(s.dir(), 0o755)
 	data, _ := json.Marshal(f)
 	if err := os.WriteFile(FilePath(s.opt.TeamDir), data, 0o600); err != nil {

@@ -249,6 +249,8 @@ Every session has a state, the same on screen and on the command line: **blocked
 
 ![Sessions in the sidebar](docs/sessions.png)
 
+After you update tubas, the next `tubas` replaces a server still running the old version, as long as nothing runs in it (no answer coming, nothing waiting for you, no terminal pane open); otherwise it keeps it and tells you to run `tubas stop`. On Windows, run `tubas stop` before `go install`: a running server keeps `tubas.exe` busy.
+
 The server listens on 127.0.0.1 only, with a random token in `.tubas/server.json`. `-local` runs everything in the window instead (the fake engine and `-snapshot` always do).
 
 ## Code: repositories and a worktree per task

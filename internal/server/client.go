@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,30 +24,102 @@ type Client struct {
 	// Window says this client is a tubas window: while one asks for the
 	// status, the server leaves notifications to it.
 	Window bool
+
+	// Outdated says the server runs an older tubas than this one and was
+	// kept, because something was running in it.
+	Outdated bool
 }
+
+// Build tells tubas binaries apart: the executable's size and time. A
+// new go install changes it, so a window can tell that the server in the
+// background still runs the old code.
+var Build = sync.OnceValue(func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	st, err := os.Stat(exe)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d-%d", st.Size(), st.ModTime().UnixNano())
+})
 
 // Discover finds a running server for the team, or says why not.
 func Discover(teamDir string) (*Client, error) {
+	c, _, _, err := discover(teamDir)
+	return c, err
+}
+
+func discover(teamDir string) (*Client, File, Status, error) {
+	var f File
 	data, err := os.ReadFile(FilePath(teamDir))
 	if err != nil {
-		return nil, errors.New("no server running")
+		return nil, f, Status{}, errors.New("no server running")
 	}
-	var f File
 	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, err
+		return nil, f, Status{}, err
 	}
 	c := &Client{URL: f.URL, Token: f.Token, HTTP: &http.Client{}}
-	if _, err := c.statusWithin(2 * time.Second); err != nil {
-		return nil, fmt.Errorf("the server in %s does not answer: %w", FilePath(teamDir), err)
+	st, err := c.statusWithin(2 * time.Second)
+	if err != nil {
+		return nil, f, st, fmt.Errorf("the server in %s does not answer: %w", FilePath(teamDir), err)
 	}
-	return c, nil
+	return c, f, st, nil
+}
+
+type serverAction int
+
+const (
+	useIt        serverAction = iota // it runs this tubas
+	replaceIt                        // an older tubas, idle: start a new one
+	keepOutdated                     // an older tubas, busy: keep it, say so
+)
+
+// whatToDo decides about a running server, given the build it runs.
+func whatToDo(f File, st Status, build string) serverAction {
+	switch {
+	case f.Build == build:
+		return useIt
+	case busy(st):
+		return keepOutdated
+	}
+	return replaceIt
+}
+
+// busy says whether stopping the server would interrupt you: a session
+// running or waiting for you, or a terminal pane open.
+func busy(st Status) bool {
+	for _, s := range st.Sessions {
+		if s.State == Working || s.State == Blocked {
+			return true
+		}
+	}
+	return len(st.Panes) > 0
 }
 
 // Ensure returns the team's server, starting one in the background when
 // none runs. started says whether this call started it.
+//
+// A server started by an older tubas (before a go install) is replaced
+// when nothing runs in it, so a new version never talks to old code;
+// otherwise it is kept, and Outdated says so.
 func Ensure(teamDir, exe string, args ...string) (c *Client, started bool, err error) {
-	if c, err := Discover(teamDir); err == nil {
-		return c, false, nil
+	if c, f, st, err := discover(teamDir); err == nil {
+		switch whatToDo(f, st, Build()) {
+		case useIt:
+			return c, false, nil
+		case keepOutdated:
+			c.Outdated = true
+			return c, false, nil
+		}
+		c.StopServer()
+		for range 50 { // up to 5 s for it to go
+			if _, err := os.Stat(FilePath(teamDir)); err != nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
 	os.Remove(FilePath(teamDir)) // a stale file from a server that died
 	os.MkdirAll(filepath.Join(teamDir, ".tubas"), 0o755)

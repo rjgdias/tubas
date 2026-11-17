@@ -67,6 +67,8 @@ type Config struct {
 
 	// Notify is team.yaml's notify: all, window or off.
 	Notify string
+	// Notice is shown at the bottom when the window opens.
+	Notice string
 
 	// Harnesses are the ones this computer can run (claude, codex, api,
 	// ACP agents); Providers maps each model provider to its models. The
@@ -210,6 +212,9 @@ func New(team []agent.Agent, eng engine.Engine, cfg Config) Model {
 	}
 	if cfg.Panes != nil {
 		m.panes = newPaneState(cfg.Panes)
+	}
+	if cfg.Notice != "" {
+		m.notice = warnStyle.Render(cfg.Notice)
 	}
 	return m.loadWork()
 }
