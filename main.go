@@ -263,10 +263,9 @@ func reportsDir(t team.Team) string {
 // claudeEngine wires the real engine: the approval broker and the tool
 // gateway each agent gets.
 func claudeEngine(t team.Team, model string) (engine.ClaudeEngine, func(), error) {
-	command, err := engine.FindClaude()
-	if err != nil {
-		return engine.ClaudeEngine{}, nil, err
-	}
+	// Without Claude Code installed, command stays "" and claude agents
+	// run on the api harness, through your Claude settings (see harnesses).
+	command, _ := engine.FindClaude()
 	exe, err := os.Executable() // claude will start this same binary as `tubas mcp`
 	if err != nil {
 		return engine.ClaudeEngine{}, nil, err
@@ -276,7 +275,10 @@ func claudeEngine(t team.Team, model string) (engine.ClaudeEngine, func(), error
 		return engine.ClaudeEngine{}, nil, err
 	}
 	provider := engine.FindProvider(t.Dir) // a work gateway, Bedrock or Vertex set in your Claude settings
-	_, plan, _ := engine.ClaudeAuth(command)
+	plan := false
+	if command != "" {
+		_, plan, _ = engine.ClaudeAuth(command)
+	}
 	return engine.ClaudeEngine{
 		Command:         command,
 		Model:           model,
@@ -309,8 +311,15 @@ func harnesses(t team.Team, claude engine.ClaudeEngine, model string) engine.ByH
 			prices[model] = p
 		}
 	}
-	byHarness["api"] = engine.APIEngine{Providers: claude.Providers, DefaultProvider: t.Provider, WorkDir: t.Dir,
+	api := engine.APIEngine{Setup: claude.Provider, Providers: claude.Providers, DefaultProvider: t.Provider, WorkDir: t.Dir,
 		Gateway: gateway, Approvals: claude.Approvals, Prices: prices}
+	byHarness["api"] = api
+	if claude.Command == "" {
+		// No Claude Code here (a work laptop with only a gateway in the
+		// Claude settings, say): claude agents run on tubas's own loop,
+		// through that gateway, unchanged.
+		byHarness["claude"] = api
+	}
 	acp := map[string]string{}
 	for name, h := range t.Harnesses {
 		acp[name] = h.ACP

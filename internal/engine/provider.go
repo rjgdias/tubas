@@ -1,12 +1,19 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Agents run with --setting-sources "", so Claude Code skips your
@@ -24,6 +31,11 @@ import (
 type Provider struct {
 	Env     map[string]string // variables to pass to claude
 	Sources []string          // the settings files they came from
+
+	// KeyHelper is your settings' apiKeyHelper: a command that prints the
+	// key (company setups often fetch a short-lived token this way).
+	// Agents run without your settings, so tubas runs it for them.
+	KeyHelper string
 }
 
 // Label describes the provider for the header: "" for Claude's own
@@ -92,7 +104,88 @@ func (p Provider) With(other Provider) Provider {
 	for k, v := range other.Env {
 		env[k] = v
 	}
-	return Provider{Env: env, Sources: p.Sources}
+	return Provider{Env: env, Sources: p.Sources, KeyHelper: p.KeyHelper}
+}
+
+// Get is a variable as the agents will see it: from the provider, else
+// from this process.
+func (p Provider) Get(k string) string {
+	if v, ok := p.Env[k]; ok {
+		return v
+	}
+	return os.Getenv(k)
+}
+
+// Resolved runs the apiKeyHelper, when there is one, and puts the key
+// where Claude Code would send it: as X-Api-Key and as a bearer token.
+func (p Provider) Resolved() (Provider, error) {
+	if p.KeyHelper == "" {
+		return p, nil
+	}
+	key, err := helperKey(p.KeyHelper, p.Get("CLAUDE_CODE_API_KEY_HELPER_TTL_MS"))
+	if err != nil {
+		return p, fmt.Errorf("apiKeyHelper from your Claude settings: %w", err)
+	}
+	return p.With(Provider{Env: map[string]string{"ANTHROPIC_API_KEY": key, "ANTHROPIC_AUTH_TOKEN": key}}), nil
+}
+
+// helperKey runs a key helper, reusing its answer for a while (5 minutes,
+// or CLAUDE_CODE_API_KEY_HELPER_TTL_MS), as Claude Code does.
+var helper struct {
+	sync.Mutex
+	cmd, key string
+	at       time.Time
+}
+
+func helperKey(command, ttlMS string) (string, error) {
+	ttl := 5 * time.Minute
+	if ms, err := strconv.Atoi(strings.TrimSpace(ttlMS)); err == nil && ms > 0 {
+		ttl = time.Duration(ms) * time.Millisecond
+	}
+	helper.Lock()
+	defer helper.Unlock()
+	if helper.cmd == command && helper.key != "" && time.Since(helper.at) < ttl {
+		return helper.key, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := shellCommand(ctx, command).Output()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", command, err)
+	}
+	key := strings.TrimSpace(string(out))
+	if key == "" {
+		return "", fmt.Errorf("%s printed nothing", command)
+	}
+	helper.cmd, helper.key, helper.at = command, key, time.Now()
+	return key, nil
+}
+
+// shellCommand runs a command line the way Claude Code runs hooks and
+// helpers: in sh, or in Git Bash on Windows (PowerShell when there is none).
+func shellCommand(ctx context.Context, line string) *exec.Cmd {
+	if runtime.GOOS != "windows" {
+		return exec.CommandContext(ctx, "/bin/sh", "-c", line)
+	}
+	for _, bash := range []string{os.Getenv("CLAUDE_CODE_GIT_BASH_PATH"), `C:\Program Files\Git\bin\bash.exe`} {
+		if bash != "" {
+			if _, err := os.Stat(bash); err == nil {
+				return exec.CommandContext(ctx, bash, "-c", line)
+			}
+		}
+	}
+	return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", line)
+}
+
+// Headers are ANTHROPIC_CUSTOM_HEADERS ("Name: value", one per line).
+func (p Provider) Headers() map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(p.Get("ANTHROPIC_CUSTOM_HEADERS"), "\n") {
+		if k, v, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(k) != "" {
+			out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return out
 }
 
 // FindProvider reads the settings files Claude Code would read for a
@@ -101,9 +194,15 @@ func (p Provider) With(other Provider) Provider {
 func FindProvider(workDir string) Provider {
 	p := Provider{Env: map[string]string{}}
 	for _, path := range settingsFiles(workDir) {
-		env, ok := readSettingsEnv(path)
+		env, keyHelper, ok := readSettingsEnv(path)
 		if !ok {
 			continue
+		}
+		if keyHelper != "" {
+			p.KeyHelper = keyHelper
+			if len(p.Sources) == 0 || p.Sources[len(p.Sources)-1] != path {
+				p.Sources = append(p.Sources, path)
+			}
 		}
 		used := false
 		for k, v := range env {
@@ -138,18 +237,20 @@ func settingsFiles(workDir string) []string {
 	return files
 }
 
-// readSettingsEnv returns the "env" block of one settings file. A file
-// that is missing or unreadable is skipped, as Claude Code skips it.
-func readSettingsEnv(path string) (map[string]string, bool) {
+// readSettingsEnv returns the "env" block and the apiKeyHelper of one
+// settings file. A file that is missing or unreadable is skipped, as
+// Claude Code skips it.
+func readSettingsEnv(path string) (map[string]string, string, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false
+		return nil, "", false
 	}
 	var s struct {
-		Env map[string]any `json:"env"`
+		Env          map[string]any `json:"env"`
+		APIKeyHelper string         `json:"apiKeyHelper"`
 	}
-	if err := json.Unmarshal(data, &s); err != nil || len(s.Env) == 0 {
-		return nil, false
+	if err := json.Unmarshal(data, &s); err != nil || (len(s.Env) == 0 && s.APIKeyHelper == "") {
+		return nil, "", false
 	}
 	env := make(map[string]string, len(s.Env))
 	for k, v := range s.Env {
@@ -161,7 +262,7 @@ func readSettingsEnv(path string) (map[string]string, bool) {
 			env[k] = string(b)
 		}
 	}
-	return env, true
+	return env, strings.TrimSpace(s.APIKeyHelper), true
 }
 
 // isProviderVar says whether a variable chooses or reaches the AI

@@ -96,6 +96,9 @@ func detectClaude(ctx context.Context, provider Provider) *Detected {
 	path, err := FindClaude()
 	if err != nil {
 		d.Detail = "Claude Code not found · install it from claude.com/claude-code"
+		if provider.Label() != "" || provider.KeyHelper != "" {
+			d.Detail = "Claude Code not found · claude agents run on tubas's own loop, through your Claude settings"
+		}
 		return d
 	}
 	// The same environment agents get, so a gateway in your settings is
@@ -198,6 +201,9 @@ func detectGateway(provider Provider) *Detected {
 			paths[i] = shortPath(p)
 		}
 		from = "from " + strings.Join(paths, ", ")
+	}
+	if provider.KeyHelper != "" {
+		from += " · token from your apiKeyHelper"
 	}
 	return &Detected{Name: "gateway", Ready: true, Usable: true, Detail: through + " · " + from}
 }

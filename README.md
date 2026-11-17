@@ -432,7 +432,11 @@ Everything the window does, scripts and other agents can do too. Every command t
 
 ### Your AI provider
 
-A work setup usually names the provider in the `env` block of `~/.claude/settings.json` (a company gateway in `ANTHROPIC_BASE_URL`, Bedrock, Vertex, a proxy or CA certificate). Isolation would drop it, so tubas reads your user settings and the team folder's `.claude/settings.json` and `settings.local.json`, and passes on only the variables that choose and reach the provider (`ANTHROPIC_*`, `CLAUDE_CODE_USE_*`, `AWS_*`, proxies, `NODE_EXTRA_CA_CERTS`). The header says which one is in use: `claude · gateway llm.example.com`. An `apiKeyHelper` script is not run yet.
+A work setup usually names the provider in the `env` block of `~/.claude/settings.json` (a company gateway in `ANTHROPIC_BASE_URL`, Bedrock, Vertex, a proxy or CA certificate). Isolation would drop it, so tubas reads your user settings and the team folder's `.claude/settings.json` and `settings.local.json`, and passes on only the variables that choose and reach the provider (`ANTHROPIC_*`, `CLAUDE_CODE_USE_*`, `AWS_*`, proxies, `NODE_EXTRA_CA_CERTS`). The header says which one is in use: `claude · gateway llm.example.com`. Nothing to configure in tubas: it picks your company's setup up on its own.
+
+- **A token from a script.** When your settings fetch the key with an `apiKeyHelper`, tubas runs it (in sh, or Git Bash on Windows), reuses the token for 5 minutes (or `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`), and hands it to the agents the way Claude Code would.
+- **Your gateway's headers and model names.** `ANTHROPIC_CUSTOM_HEADERS` and `ANTHROPIC_DEFAULT_SONNET_MODEL` (and the opus and haiku ones) are passed on, so `model: sonnet` means whatever your gateway calls it.
+- **No Claude Code installed?** With a gateway (or a key) in your Claude settings, agents whose harness is `claude` run on tubas's own loop instead, straight on that gateway's Anthropic-compatible endpoint, with the same token, headers and model names. The header then says `api · gateway llm.example.com`. Bedrock and Vertex still need Claude Code, and so does escalation to a senior model.
 
 ### Packages
 

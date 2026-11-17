@@ -34,6 +34,10 @@ type Price struct {
 
 // APIEngine runs agents with harness: api.
 type APIEngine struct {
+	// Setup is your Claude setup (FindProvider): the provider "anthropic"
+	// goes where it points, a company gateway included, with its token,
+	// apiKeyHelper, headers and model names.
+	Setup           Provider
 	Providers       map[string]ProviderSpec
 	DefaultProvider string
 	WorkDir         string
@@ -44,7 +48,56 @@ type APIEngine struct {
 	MaxSteps        int // model calls per turn (0 = 30)
 }
 
-func (e APIEngine) Name() string { return "api" }
+func (e APIEngine) Name() string {
+	if label := e.Setup.Label(); label != "" {
+		return "api · " + label
+	}
+	return "api"
+}
+
+// setupSpec is the provider "anthropic" on the api harness: where your
+// Claude settings point (a gateway), else Anthropic's API with a key.
+func (e APIEngine) setupSpec() (ProviderSpec, string, map[string]string, error) {
+	setup, err := e.Setup.Resolved()
+	if err != nil {
+		return ProviderSpec{}, "", nil, err
+	}
+	for _, v := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
+		if truthy(setup.Get(v)) {
+			return ProviderSpec{}, "", nil, errors.New("your Claude setup uses " + e.Setup.Label() + ": that needs the claude harness (Claude Code installed)")
+		}
+	}
+	spec := anthropicAPI
+	if base := setup.Get("ANTHROPIC_BASE_URL"); base != "" {
+		spec.Anthropic = base
+	}
+	key := setup.Get("ANTHROPIC_AUTH_TOKEN")
+	if key == "" {
+		key = setup.Get("ANTHROPIC_API_KEY")
+	}
+	if key == "" {
+		return ProviderSpec{}, "", nil, errors.New("no key for your Claude setup: set ANTHROPIC_API_KEY, or ANTHROPIC_AUTH_TOKEN or an apiKeyHelper in your Claude settings")
+	}
+	return spec, key, setup.Headers(), nil
+}
+
+// setupModel maps claude's short names to the ones your setup asks for
+// (a gateway often names models its own way), as Claude Code does.
+func (e APIEngine) setupModel(model string) string {
+	if model == "" {
+		model = "sonnet"
+	}
+	if short, ok := claudeAliases[model]; ok {
+		if m := e.Setup.Get("ANTHROPIC_DEFAULT_" + strings.ToUpper(model) + "_MODEL"); m != "" {
+			return m
+		}
+		if m := e.Setup.Get("ANTHROPIC_MODEL"); m != "" {
+			return m
+		}
+		return short
+	}
+	return model
+}
 
 // anthropicAPI is the provider "anthropic" for the api harness: Anthropic's
 // own API, with an API key (a Claude plan works only through claude).
@@ -87,26 +140,31 @@ func (e APIEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- Even
 	if name == "" {
 		name = e.DefaultProvider
 	}
-	spec := anthropicAPI
-	if name != "" && name != Anthropic {
+	var spec ProviderSpec
+	var key, model string
+	headers := map[string]string{}
+	if name == "" || name == Anthropic {
+		var err error
+		if spec, key, headers, err = e.setupSpec(); err != nil {
+			return Reply{}, fmt.Errorf("%s: %w", a.Name, err)
+		}
+		model = e.setupModel(a.Model)
+	} else {
 		var ok bool
 		if spec, ok = e.Providers[name]; !ok {
 			return Reply{}, fmt.Errorf("%s: no provider named %q", a.Name, name)
 		}
-	}
-	key, missing := spec.Key()
-	if missing {
-		return Reply{}, fmt.Errorf("%s: %s needs its key: set the environment variable %s", a.Name, spec.Name, spec.KeyEnv)
-	}
-	model := a.Model
-	if isClaudeModel(model) && spec.Name != Anthropic || model == "" {
-		model = ""
-		if len(spec.Models) > 0 {
-			model = spec.Models[0]
+		var missing bool
+		if key, missing = spec.Key(); missing {
+			return Reply{}, fmt.Errorf("%s: %s needs its key: set the environment variable %s", a.Name, spec.Name, spec.KeyEnv)
 		}
-	}
-	if full, ok := claudeAliases[model]; ok && spec.Name == Anthropic {
-		model = full // the API wants the model's id
+		model = a.Model
+		if isClaudeModel(model) {
+			model = ""
+			if len(spec.Models) > 0 {
+				model = spec.Models[0]
+			}
+		}
 	}
 	if model == "" {
 		return Reply{}, fmt.Errorf("%s: say which model to use (model: in the agent's file)", a.Name)
@@ -141,7 +199,8 @@ func (e APIEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- Even
 	system := SystemPrompt(a, req.Team) + apiCodePrompt(code)
 	var chat apiChat
 	if spec.Anthropic != "" {
-		chat = &messagesChat{http: client, base: spec.Anthropic, key: key, official: spec.Name == Anthropic, model: model,
+		chat = &messagesChat{http: client, base: spec.Anthropic, key: key, headers: headers,
+			official: spec.Anthropic == anthropicAPI.Anthropic, model: model,
 			system: system, tools: tools, prompt: req.Prompt, effort: turnEffort(a.Effort, req.Kind)}
 	} else {
 		chat = &openAIChat{http: client, base: spec.OpenAI, key: key, model: model, system: system, tools: tools, prompt: req.Prompt}
@@ -310,6 +369,7 @@ type messagesChat struct {
 	http             *http.Client
 	base, key, model string
 	official         bool
+	headers          map[string]string // ANTHROPIC_CUSTOM_HEADERS
 	system, prompt   string
 	effort           string
 	tools            []apiTool
@@ -331,6 +391,9 @@ func (c *messagesChat) next(ctx context.Context) (apiStep, error) {
 		body["tools"] = tools
 	}
 	headers := map[string]string{"anthropic-version": "2023-06-01"}
+	for k, v := range c.headers {
+		headers[k] = v
+	}
 	if c.official {
 		headers["x-api-key"] = c.key
 	} else {

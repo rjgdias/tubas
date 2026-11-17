@@ -45,11 +45,15 @@ func buildEngine(t team.Team, name, model string, fast bool) (engine.Engine, eng
 		}
 		// The router is one cheap call: a small model scores the agents,
 		// on the team's provider.
-		router := engine.ClaudeRouter{Command: claude.Command, Model: "haiku", WorkDir: t.Dir, Provider: claude.Provider}
-		if spec, ok := claude.Providers[t.Provider]; ok {
-			if p, err := spec.ClaudeProvider(spec.FastModel()); err == nil {
-				router.Provider, router.Model = claude.Provider.With(p), p.Env["ANTHROPIC_MODEL"]
+		var router engine.Router = engine.RuleRouter{} // without claude, rules pick who answers
+		if claude.Command != "" {
+			cr := engine.ClaudeRouter{Command: claude.Command, Model: "haiku", WorkDir: t.Dir, Provider: claude.Provider}
+			if spec, ok := claude.Providers[t.Provider]; ok {
+				if p, err := spec.ClaudeProvider(spec.FastModel()); err == nil {
+					cr.Provider, cr.Model = claude.Provider.With(p), p.Env["ANTHROPIC_MODEL"]
+				}
 			}
+			router = cr
 		}
 		return harnesses(t, claude, model), router, closeBroker
 	}
