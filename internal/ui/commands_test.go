@@ -158,8 +158,19 @@ func TestPlainChatSidebarHasNoWorkspaceTree(t *testing.T) {
 	if m.onlyChat() {
 		t.Error("with a terminal open, the tree is back")
 	}
+	// ctrl+b X on the team's workspace: it asks, closes the terminal, and
+	// with only the chat left it leaves the sidebar.
 	m = m.PressKeys("ctrl+b", "X")
-	if !strings.Contains(ansi.Strip(m.notice), "team's workspace stays") {
-		t.Errorf("the team's workspace can't be closed: %q", m.notice)
+	if !strings.Contains(ansi.Strip(m.notice), "from the sidebar") || !strings.Contains(ansi.Strip(m.notice), "the chat stays") {
+		t.Fatalf("it asks first, saying the chat stays: %q", m.notice)
+	}
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	m = next.(Model)
+	if !m.onlyChat() {
+		t.Error("its terminal is closed: only the chat is left")
+	}
+	lines, _ = m.sidebarLines(sidebarW, 20)
+	if text := ansi.Strip(strings.Join(lines, "\n")); strings.Contains(text, "1 chat") || strings.Contains(text, "new tab") {
+		t.Errorf("and it is gone from the sidebar:\n%s", text)
 	}
 }

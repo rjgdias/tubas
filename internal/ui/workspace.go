@@ -287,6 +287,9 @@ func (m Model) sidebarLines(w, h int) ([]string, []sideRow) {
 		spaces = nil
 	}
 	for wi, ws := range spaces {
+		if justTheChat(ws) && len(spaces) > 1 {
+			continue // only the chat in it: the conversations below take you there
+		}
 		var ids []string
 		for _, t := range ws.Tabs {
 			ids = append(ids, t.Root.leaves()...)

@@ -470,17 +470,24 @@ func (m Model) paneKey(key string) (Model, tea.Cmd, bool) {
 		m.section = SecChat
 		return m.newWorkspaceForm(), nil, true
 	case "X":
-		if !ws.Own {
-			m.notice = dimStyle.Render("the team's workspace stays (the chat lives there) · ctrl+b X closes one you made")
+		n := 0
+		for _, t := range ws.Tabs {
+			for _, id := range t.Root.leaves() {
+				if id != chatPane {
+					n++
+				}
+			}
+		}
+		if hasChat(ws) && n == 0 && len(ws.Tabs) == 1 {
+			m.notice = dimStyle.Render(ws.Name + " only holds the chat: it isn't in the sidebar")
 			return m, nil, true
 		}
 		ps.closingWS = ws
-		n := 0
-		for _, t := range ws.Tabs {
-			n += len(t.Root.leaves())
+		what := "close the workspace " + ws.Name + " and its " + plural(n, "terminal") + "?"
+		if hasChat(ws) {
+			what = "delete " + ws.Name + " from the sidebar? its " + plural(n, "terminal") + " and tabs close; the chat stays"
 		}
-		m.notice = warnStyle.Render("close the workspace "+ws.Name+" and its "+plural(n, "terminal")+"?") +
-			dimStyle.Render(" y closes it · any other key keeps it")
+		m.notice = warnStyle.Render(what) + dimStyle.Render(" y · any other key keeps it")
 		return m, nil, true
 	case "w":
 		ps.ws = (ps.ws + 1) % len(ps.spaces)
@@ -593,6 +600,19 @@ func (m Model) closeWorkspace(ws *workspace) (Model, tea.Cmd) {
 			}
 		}
 	}
+	if hasChat(ws) {
+		// The chat lives here: it stays, alone, and with nothing else in
+		// it the workspace leaves the sidebar.
+		ws.Tabs = []*tab{{Name: "chat", Root: &layoutNode{Pane: chatPane}, Focus: chatPane}}
+		ws.Tab = 0
+		for i, s := range ps.spaces {
+			if s == ws {
+				ps.ws = i
+			}
+		}
+		m.notice = okStyle.Render("✓ "+ws.Name+" is gone from the sidebar") + dimStyle.Render(" · the chat stays")
+		return m, tea.Batch(append(cmds, ps.saveLayout())...)
+	}
 	for i, s := range ps.spaces {
 		if s == ws {
 			ps.spaces = append(ps.spaces[:i:i], ps.spaces[i+1:]...)
@@ -602,6 +622,24 @@ func (m Model) closeWorkspace(ws *workspace) (Model, tea.Cmd) {
 	ps.ws = 0
 	m.notice = okStyle.Render("✓ closed the workspace " + ws.Name)
 	return m, tea.Batch(append(cmds, ps.saveLayout())...)
+}
+
+// hasChat says whether the chat lives in this workspace.
+func hasChat(ws *workspace) bool {
+	for _, t := range ws.Tabs {
+		for _, id := range t.Root.leaves() {
+			if id == chatPane {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// justTheChat: a workspace with only the chat in it, which the sidebar
+// leaves out (the conversations take you to the chat).
+func justTheChat(ws *workspace) bool {
+	return len(ws.Tabs) == 1 && hasChat(ws) && len(ws.Tabs[0].Root.leaves()) == 1
 }
 
 func (m Model) closePaneCmd(id string) tea.Cmd {

@@ -325,7 +325,7 @@ Not every agent is a tubas agent. A pane is a real terminal inside tubas: claude
 | `ctrl+b` then `n` / `p`, `1`…`9` | next / previous tab, tab by number |
 | `ctrl+b` then `w` | the next workspace |
 | `ctrl+b` then `N` | a new workspace, for any folder |
-| `ctrl+b` then `X` | close a workspace you made, and its terminals (it asks first; the team's own stays, the chat lives there) |
+| `ctrl+b` then `X` | close the workspace and its terminals, after asking; the team's own (`personal`, say) leaves the sidebar and only the chat stays |
 | `ctrl+b` then `b` | show or hide the sidebar |
 | `ctrl+b` then `z` | zoom the focused pane, again to go back |
 | `ctrl+b` then `[` | scroll back through the pane (copy mode) |
@@ -337,7 +337,7 @@ The new pane menu asks what to run (your shell, an agent CLI found on this compu
 
 Keys go to the focused pane, `ctrl+c` included; tubas keeps only `ctrl+b` and `alt+1…7`. The chat is a pane too: move to it and type as usual.
 
-**The sidebar** lists every workspace and its tabs with the state of what runs inside, and the team's conversations below them, so nothing waiting for you is out of sight. While you only chat (no terminal, no workspace of yours), it lists just the conversations. It shows up by itself once there are panes or a few sessions and the window is wide enough; `ctrl+b b` decides. Without it, a line of tabs sits above the panes.
+**The sidebar** lists every workspace and its tabs with the state of what runs inside, and the team's conversations below them, so nothing waiting for you is out of sight. While you only chat (no terminal, no workspace of yours), it lists just the conversations: a workspace that holds nothing but the chat stays out of it. It shows up by itself once there are panes or a few sessions and the window is wide enough; `ctrl+b b` decides. Without it, a line of tabs sits above the panes.
 
 **Copy mode** (`ctrl+b [` or the wheel) shows what the pane printed, 5000 lines back: `h` `j` `k` `l`, `w` `b`, `0` `$`, `g` `G`, `pgup` `pgdown` move; `/` searches back (`n` again, `N` forward); `v` starts a selection; `y` or `enter` copies it, or the line under the cursor; `q` goes back to the live terminal.
 
