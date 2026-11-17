@@ -41,6 +41,16 @@ Type `tubas` anywhere and ask something. That's it: your personal tubas is a cha
 - `/agents` adds a teammate (an analyst, an engineer, a reviewer…). With two or more, they hand work to each other with @mentions and you see who does what.
 - Type `/` to see every command, `?` for the keys.
 
+### When an answer doesn't come
+
+```bash
+tubas doctor
+```
+
+It checks, one step at a time, how agents reach a model on this computer: Claude Code, your Claude settings (a company gateway, its token script), the gateway's model list, and one real answer with the same engine the chat uses. Each step says what it found and, when it fails, what to do; the output has no keys, so you can share it.
+
+While an answer is coming, the chat says when the provider is failing (`⟳ the provider failed (500) · trying again, 3 of 10`) instead of a silent "working": Claude Code retries a failing gateway for minutes. A key the gateway refuses twice stops the turn at once and says to check your token script, and a failure shows its whole reason.
+
 ### An example team
 
 From this repository's folder, open the example team, a data team over a synthetic delivery database:
@@ -416,6 +426,7 @@ Everything the window does, scripts and other agents can do too. Every command t
 | `tubas pane read ID` | a pane's screen as text (`-color` keeps the colors) |
 | `tubas pane list [-json]`, `tubas pane close ID` | lists, closes |
 | `tubas stop` | stops the server and every session and pane (panes come back with it) |
+| `tubas doctor` | checks Claude Code, your settings, the token script, the gateway and one real answer, step by step |
 
 ## How it works
 

@@ -1,6 +1,9 @@
 package engine
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Event is something that happened while agents were working. The engine
 // produces events; the TUI reads them and redraws.
@@ -61,6 +64,44 @@ type TurnFinished struct {
 	Plan    bool    // billed to a subscription: no price per turn
 }
 
+// Retrying: the provider failed a request and the harness tries again
+// (claude retries up to 10 times, minutes in all). Status is the HTTP
+// status, 0 when the gateway could not be reached.
+type Retrying struct {
+	Agent        string
+	Attempt, Max int
+	Status       int
+	Reason       string // claude's word for it: authentication_failed, server_error…
+	Delay        time.Duration
+}
+
+// Problem says what went wrong, in words: "the gateway refused the key
+// (401)".
+func (r Retrying) Problem() string {
+	switch {
+	case r.Status == 401 || r.Status == 403:
+		return fmt.Sprintf("the provider refused the key (%d)", r.Status)
+	case r.Status == 404:
+		return "the provider does not know this model (404)"
+	case r.Status == 429 || r.Status == 529:
+		return fmt.Sprintf("the provider is busy (%d)", r.Status)
+	case r.Status >= 500:
+		return fmt.Sprintf("the provider failed (%d)", r.Status)
+	case r.Status > 0:
+		return fmt.Sprintf("the provider answered %d", r.Status)
+	}
+	return "the provider can't be reached"
+}
+
+// String is the line the chat shows while it waits.
+func (r Retrying) String() string {
+	s := r.Problem()
+	if r.Max > 0 {
+		s += fmt.Sprintf(" · trying again, %d of %d", r.Attempt, r.Max)
+	}
+	return s
+}
+
 // HandedOff: an agent passed the work to another one.
 type HandedOff struct{ From, To, Note string }
 
@@ -84,6 +125,7 @@ func (TextDelta) isEvent()         {}
 func (ApprovalRequested) isEvent() {}
 func (TurnFinished) isEvent()      {}
 func (HandedOff) isEvent()         {}
+func (Retrying) isEvent()          {}
 func (SessionDone) isEvent()       {}
 func (HopLimitReached) isEvent()   {}
 func (Failed) isEvent()            {}

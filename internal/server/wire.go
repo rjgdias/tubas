@@ -41,6 +41,8 @@ type Wire struct {
 	Model   string  `json:"model,omitempty"`
 	Plan    bool    `json:"plan,omitempty"`
 	Limit   int     `json:"limit,omitempty"`
+	Attempt int     `json:"attempt,omitempty"`
+	Status  int     `json:"status,omitempty"`
 	Error   string  `json:"error,omitempty"`
 
 	Agents []string           `json:"agents,omitempty"`
@@ -71,6 +73,9 @@ func Encode(e engine.Event) Wire {
 			Cost: e.Cost, Millis: e.Elapsed.Milliseconds(), Passed: e.Passed, Model: e.Model, Plan: e.Plan}
 	case engine.HandedOff:
 		return Wire{Kind: "handed_off", From: e.From, To: e.To, Note: e.Note}
+	case engine.Retrying:
+		return Wire{Kind: "retrying", Agent: e.Agent, Attempt: e.Attempt, Limit: e.Max, Status: e.Status,
+			Reason: e.Reason, Millis: e.Delay.Milliseconds()}
 	case engine.SessionDone:
 		return Wire{Kind: "done"}
 	case engine.HopLimitReached:
@@ -106,6 +111,9 @@ func (w Wire) Decode(reply chan<- bool) engine.Event {
 			Cost: w.Cost, Elapsed: time.Duration(w.Millis) * time.Millisecond, Passed: w.Passed, Model: w.Model, Plan: w.Plan}
 	case "handed_off":
 		return engine.HandedOff{From: w.From, To: w.To, Note: w.Note}
+	case "retrying":
+		return engine.Retrying{Agent: w.Agent, Attempt: w.Attempt, Max: w.Limit, Status: w.Status,
+			Reason: w.Reason, Delay: time.Duration(w.Millis) * time.Millisecond}
 	case "done":
 		return engine.SessionDone{}
 	case "hop_limit":

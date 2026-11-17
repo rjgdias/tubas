@@ -1,11 +1,16 @@
 package ui
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+
+	"tubas/internal/engine"
 )
 
 func TestSlashAgentsOpensTheForm(t *testing.T) {
@@ -34,5 +39,25 @@ func TestGatewayListsOnlyMappedShortNames(t *testing.T) {
 	m.onGateway = false
 	if got := m.modelsFor("claude", "anthropic", ""); !slices.Contains(got, "opus") {
 		t.Errorf("on Anthropic itself, every short name: %v", got)
+	}
+}
+
+func TestAFailingProviderShowsOnScreen(t *testing.T) {
+	s := Session{Question: "oi", StartedAt: time.Now()}
+	s = s.apply(engine.TurnStarted{Agent: "leo", From: "you"})
+	s = s.apply(engine.Retrying{Agent: "leo", Attempt: 6, Max: 10, Status: 500})
+	if got := s.Turns[0].Retry; got != "the provider failed (500) · trying again, 6 of 10" {
+		t.Errorf("a retry shows on the turn, got %q", got)
+	}
+	long := "leo: claude: API Error: 500 upstream failed. This is a server-side issue, usually temporary, try again in a moment. If it persists, check your inference gateway."
+	s = s.apply(engine.Failed{Agent: "leo", Err: errors.New(long[5:])})
+	if tr := s.Turns[0]; tr.Status != Stopped || tr.Retry != "" {
+		t.Errorf("a failed session's turn is no longer working: %+v", tr)
+	}
+	text := ansi.Strip(strings.Join(outcomeLines(s, 60), " "))
+	for _, want := range []string{"failed", "check your inference gateway"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the whole reason shows, wrapped: %q missing in %q", want, text)
+		}
 	}
 }

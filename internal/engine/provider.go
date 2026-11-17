@@ -211,13 +211,40 @@ func helperKey(command, ttlMS string) (string, error) {
 	return key, nil
 }
 
+// RunKeyHelper runs an apiKeyHelper once, for tubas doctor: the key, how
+// long it took, and what it printed on stderr. It waits 30 s at most,
+// like Claude Code.
+func RunKeyHelper(command string) (key string, took time.Duration, stderr string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := shellCommand(ctx, command)
+	var errBuf strings.Builder
+	cmd.Stderr = &errBuf
+	start := time.Now()
+	out, err := cmd.Output()
+	took = time.Since(start)
+	if ctx.Err() != nil {
+		err = fmt.Errorf("still running after 30 s (does it wait for a login in the browser?)")
+	}
+	key = strings.TrimSpace(string(out))
+	if err == nil && key == "" {
+		err = fmt.Errorf("it printed nothing")
+	}
+	return key, took, strings.TrimSpace(errBuf.String()), err
+}
+
 // shellCommand runs a command line the way Claude Code runs hooks and
 // helpers: in sh, or in Git Bash on Windows (PowerShell when there is none).
 func shellCommand(ctx context.Context, line string) *exec.Cmd {
 	if runtime.GOOS != "windows" {
 		return exec.CommandContext(ctx, "/bin/sh", "-c", line)
 	}
-	for _, bash := range []string{os.Getenv("CLAUDE_CODE_GIT_BASH_PATH"), `C:\Program Files\Git\bin\bash.exe`} {
+	candidates := []string{os.Getenv("CLAUDE_CODE_GIT_BASH_PATH"), `C:\Program Files\Git\bin\bash.exe`}
+	if git, err := exec.LookPath("git"); err == nil { // Git installed elsewhere: its bash is next to it
+		root := filepath.Dir(filepath.Dir(git)) // …\Git\cmd\git.exe → …\Git
+		candidates = append(candidates, filepath.Join(root, "bin", "bash.exe"), filepath.Join(root, "usr", "bin", "bash.exe"))
+	}
+	for _, bash := range candidates {
 		if bash != "" {
 			if _, err := os.Stat(bash); err == nil {
 				return exec.CommandContext(ctx, bash, "-c", line)

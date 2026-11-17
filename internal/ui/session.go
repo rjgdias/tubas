@@ -60,7 +60,8 @@ type Turn struct {
 	Plan      bool    // billed to a subscription, not per token
 	Seconds   int
 	StartedAt time.Time
-	Open      bool // expanded by the user
+	Retry     string // the provider is failing and the harness tries again: why
+	Open      bool   // expanded by the user
 }
 
 // Handoff is one agent this turn called, and what it asked.
@@ -173,7 +174,9 @@ func (s Session) apply(e engine.Event) Session {
 			}
 		})
 	case engine.TextDelta:
-		s.updateTurn(e.Agent, func(t *Turn) { t.Text += e.Text })
+		s.updateTurn(e.Agent, func(t *Turn) { t.Text += e.Text; t.Retry = "" })
+	case engine.Retrying:
+		s.updateTurn(e.Agent, func(t *Turn) { t.Retry = e.String() })
 	case engine.ApprovalRequested:
 		s.updateTurn(e.Agent, func(t *Turn) { t.Status = Waiting })
 		if s.Pending == nil { // otherwise it waits in the model's queue
@@ -206,6 +209,15 @@ func (s Session) apply(e engine.Event) Session {
 
 func (s Session) end(o Outcome, detail string) Session {
 	s.Outcome, s.Detail, s.Elapsed = o, detail, time.Since(s.StartedAt)
+	// A turn still running when the session ends did not finish: it no
+	// longer says "working", nor that it is trying again.
+	s.Turns = slices.Clone(s.Turns)
+	for i := range s.Turns {
+		if t := &s.Turns[i]; t.Status == Live || t.Status == Waiting {
+			t.Status, t.Retry = Stopped, ""
+			t.Seconds = int(time.Since(t.StartedAt).Seconds())
+		}
+	}
 	return s
 }
 

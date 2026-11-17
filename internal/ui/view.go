@@ -512,8 +512,11 @@ func (m Model) turnBody(t Turn, w int, open bool) []string {
 		lines = append(lines, renderMarkdown(t.Summary, w)...)
 	case t.Text != "":
 		lines = append(lines, withCursor(renderMarkdown(t.Text, w-1))...) // still writing
+	case t.Status == Live && t.Retry != "":
+		// The provider is failing: say so, not "thinking" for minutes.
+		lines = append(lines, fit(warnStyle.Render("⟳ "+t.Retry)+dimStyle.Render(waited(t)), w))
 	case t.Status == Live && len(t.Steps) == 0:
-		lines = append(lines, dimStyle.Render("  thinking…"))
+		lines = append(lines, dimStyle.Render("  thinking…"+waited(t)))
 	}
 	if !open {
 		// Decisions you made stay visible even when the turn is collapsed.
@@ -531,6 +534,18 @@ func (m Model) turnBody(t Turn, w int, open bool) []string {
 			dimStyle.Render(" "+h.Note), w))
 	}
 	return lines
+}
+
+// waited is how long a live turn has been at it, once that is long
+// enough to wonder: " · 12s".
+func waited(t Turn) string {
+	if t.StartedAt.IsZero() {
+		return ""
+	}
+	if d := time.Since(t.StartedAt); d >= 5*time.Second {
+		return fmt.Sprintf(" · %ds", int(d.Seconds()))
+	}
+	return ""
 }
 
 // withCursor adds the typing cursor after the last line.
@@ -579,7 +594,8 @@ func outcomeLines(s Session, w int) []string {
 			hiStyle.Render("  agents/*.md") + dimStyle.Render("  change can_call"),
 		}
 	case Failed:
-		return []string{ruleWith(badStyle.Render("failed")+dimStyle.Render("  "+s.Detail), w)}
+		// The whole reason, wrapped: it says what to do, so nothing is cut.
+		return append([]string{ruleWith(badStyle.Render("failed"), w)}, wrap(textStyle.Render(s.Detail), w)...)
 	case Cancelled:
 		return []string{ruleWith(badStyle.Render("stopped")+dimStyle.Render("  by you · ctrl+r runs it again"), w)}
 	}

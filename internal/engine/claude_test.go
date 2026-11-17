@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -146,5 +148,60 @@ func TestBrokerRoundTrip(t *testing.T) {
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusForbidden {
 		t.Errorf("expected 403 without token, got %d", resp2.StatusCode)
+	}
+}
+
+// Lines claude printed against a gateway that failed (recorded with
+// claude 2.1.303): it retries up to 10 times, minutes in all.
+const (
+	retry500 = `{"type":"system","subtype":"api_retry","attempt":3,"max_retries":10,"retry_delay_ms":2302,"error_status":500,"error":"server_error"}` + "\n"
+	retry401 = `{"type":"system","subtype":"api_retry","attempt":%d,"max_retries":10,"retry_delay_ms":2302,"error_status":401,"error":"authentication_failed"}` + "\n"
+	retryNet = `{"type":"system","subtype":"api_retry","attempt":2,"max_retries":10,"retry_delay_ms":1100,"error_status":null,"error":"unknown"}` + "\n"
+)
+
+func TestRetriesShowOnScreen(t *testing.T) {
+	events, _, err := collectStream(t, retry500+retryNet, 0)
+	if err == nil {
+		t.Fatal("no result: an error")
+	}
+	if len(events) != 2 {
+		t.Fatalf("each retry is an event: %v", events)
+	}
+	r := events[0].(Retrying)
+	if r.Status != 500 || r.Attempt != 3 || r.Max != 10 || r.String() != "the provider failed (500) · trying again, 3 of 10" {
+		t.Errorf("retry = %+v, %q", r, r.String())
+	}
+	if net := events[1].(Retrying); net.Status != 0 || net.Problem() != "the provider can't be reached" {
+		t.Errorf("no status: can't be reached, got %+v", net)
+	}
+}
+
+func TestARefusedKeyStopsAtOnce(t *testing.T) {
+	stream := fmt.Sprintf(retry401, 1) + fmt.Sprintf(retry401, 2) + fmt.Sprintf(retry401, 3)
+	events, _, err := collectStream(t, stream, 0)
+	if err != errKeyRefused {
+		t.Fatalf("a key refused twice stops the turn, got %v", err)
+	}
+	if len(events) != 1 {
+		t.Errorf("the first 401 shows (claude runs your apiKeyHelper again), the second stops: %v", events)
+	}
+	msg := keyRefused(Provider{KeyHelper: "acme token", Sources: []string{"~/.claude/settings.json"}}, &Retrying{Status: 401}).Error()
+	for _, want := range []string{"refused the key (401)", "acme token", "~/.claude/settings.json", "tubas doctor"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the message says %q: %s", want, msg)
+		}
+	}
+}
+
+func TestStoppingEarlySaysWhy(t *testing.T) {
+	_, st, err := readStream(strings.NewReader("Warning: something from a proxy\n"+retry500), "iris", 0, func(Event) error { return nil })
+	if err != errNoResult {
+		t.Fatalf("a line that isn't JSON is read past, got %v", err)
+	}
+	msg := stoppedEarly(errors.New("exit status 1"), "node: boom\nError: apiKeyHelper failed\n", st).Error()
+	for _, want := range []string{"the provider failed (500)", "apiKeyHelper failed", "Warning: something from a proxy", "exit status 1"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the message says %q: %s", want, msg)
+		}
 	}
 }

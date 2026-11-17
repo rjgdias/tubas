@@ -73,6 +73,9 @@ func main() {
 		case "pane":
 			runPane(os.Args[2:])
 			return
+		case "doctor":
+			runDoctor(os.Args[2:])
+			return
 		}
 	}
 

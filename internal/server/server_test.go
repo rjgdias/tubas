@@ -193,6 +193,7 @@ func TestWireRoundTrip(t *testing.T) {
 		engine.TextDelta{Agent: "leo", Text: "oi"},
 		engine.TurnFinished{Agent: "leo", Summary: "ok", Tokens: 10, Cached: 5, Cost: 0.01, Elapsed: 2 * time.Second, Passed: true},
 		engine.HandedOff{From: "leo", To: "nico", Note: "confere"},
+		engine.Retrying{Agent: "leo", Attempt: 3, Max: 10, Status: 401, Reason: "authentication_failed", Delay: 2 * time.Second},
 		engine.SessionDone{},
 		engine.HopLimitReached{Limit: 6},
 	}

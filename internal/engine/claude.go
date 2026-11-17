@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"tubas/internal/agent"
 )
@@ -189,8 +190,8 @@ func (c ClaudeEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- E
 		return Reply{}, fmt.Errorf("starting claude: %w", err)
 	}
 
-	reply, parseErr := parseStream(stdout, a.Name, a.TokenLimit, func(e Event) error { return send(ctx, out, e) })
-	if parseErr != nil {
+	reply, st, parseErr := readStream(stdout, a.Name, a.TokenLimit, func(e Event) error { return send(ctx, out, e) })
+	if parseErr != nil && parseErr != errNoResult {
 		_ = cmd.Process.Kill() // e.g. over the token limit: stop it now
 	}
 	waitErr := cmd.Wait()
@@ -198,6 +199,10 @@ func (c ClaudeEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- E
 	switch {
 	case ctx.Err() != nil:
 		return Reply{}, ctx.Err()
+	case parseErr == errKeyRefused:
+		return Reply{}, keyRefused(provider, st.retry)
+	case parseErr == errNoResult:
+		return Reply{}, stoppedEarly(waitErr, stderr.String(), st)
 	case parseErr != nil:
 		return Reply{}, parseErr
 	case waitErr != nil:
@@ -326,7 +331,26 @@ type streamLine struct {
 	IsError   bool    `json:"is_error"`
 	Usage     *usage  `json:"usage"`
 	TotalCost float64 `json:"total_cost_usd"`
+
+	// type "system", subtype "api_retry": a request failed, claude tries
+	// again (up to max_retries, waiting longer each time).
+	Attempt      int     `json:"attempt"`
+	MaxRetries   int     `json:"max_retries"`
+	RetryDelayMs float64 `json:"retry_delay_ms"`
+	ErrorStatus  *int    `json:"error_status"`
+	Error        string  `json:"error"`
 }
+
+// streamState is what reading the stream remembers for when it goes
+// wrong: the last retry, and lines that weren't claude's JSON.
+type streamState struct {
+	retry *Retrying
+	noise []string
+}
+
+// errKeyRefused stops a turn whose key the provider refused twice:
+// claude would keep trying for minutes, with the same key.
+var errKeyRefused = errors.New("key refused")
 
 type block struct {
 	Type      string          `json:"type"` // text, tool_use, tool_result
@@ -352,37 +376,68 @@ func (u usage) total() int {
 // final answer. limit, when above 0, stops the turn once the context
 // grows past that many tokens.
 func parseStream(r io.Reader, agentName string, limit int, emit func(Event) error) (Reply, error) {
+	reply, _, err := readStream(r, agentName, limit, emit)
+	return reply, err
+}
+
+// errNoResult: the stream ended before claude said how the turn went.
+// RunTurn turns it into what claude printed and why it stopped.
+var errNoResult = errors.New("claude stopped before answering")
+
+func readStream(r io.Reader, agentName string, limit int, emit func(Event) error) (Reply, streamState, error) {
 	reader := bufio.NewReader(r)
 	var reply Reply
+	var st streamState
 	gotResult := false
 	for {
 		line, readErr := reader.ReadBytes('\n') // lines can be long: no fixed buffer
-		if len(bytes.TrimSpace(line)) > 0 {
+		if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
 			var l streamLine
-			if err := json.Unmarshal(line, &l); err != nil {
-				return reply, fmt.Errorf("unreadable line from claude: %w", err)
+			if err := json.Unmarshal(trimmed, &l); err != nil {
+				// A warning printed on stdout (a proxy, Node): keep it for
+				// the error, and read on.
+				if len(st.noise) < 5 {
+					st.noise = append(st.noise, firstLine(string(trimmed)))
+				}
+			} else {
+				done, err := handleLine(l, agentName, limit, emit, &reply, &st)
+				if err != nil {
+					return reply, st, err
+				}
+				gotResult = gotResult || done
 			}
-			done, err := handleLine(l, agentName, limit, emit, &reply)
-			if err != nil {
-				return reply, err
-			}
-			gotResult = gotResult || done
 		}
 		if readErr == io.EOF {
 			break
 		}
 		if readErr != nil {
-			return reply, readErr
+			return reply, st, readErr
 		}
 	}
 	if !gotResult {
-		return reply, errors.New("claude ended without a result")
+		return reply, st, errNoResult
 	}
-	return reply, nil
+	return reply, st, nil
 }
 
-func handleLine(l streamLine, agentName string, limit int, emit func(Event) error, reply *Reply) (bool, error) {
+func handleLine(l streamLine, agentName string, limit int, emit func(Event) error, reply *Reply, st *streamState) (bool, error) {
 	switch l.Type {
+	case "system":
+		if l.Subtype != "api_retry" {
+			return false, nil
+		}
+		r := Retrying{Agent: agentName, Attempt: l.Attempt, Max: l.MaxRetries, Reason: l.Error,
+			Delay: time.Duration(l.RetryDelayMs) * time.Millisecond}
+		if l.ErrorStatus != nil {
+			r.Status = *l.ErrorStatus
+		}
+		st.retry = &r
+		// A refused key stays refused: claude already ran your apiKeyHelper
+		// again after the first 401, so stop instead of minutes of retries.
+		if (r.Status == 401 || r.Status == 403) && r.Attempt >= 2 {
+			return true, errKeyRefused
+		}
+		return false, emit(r)
 	case "stream_event":
 		if l.Event != nil && l.Event.Type == "content_block_delta" &&
 			l.Event.Delta != nil && l.Event.Delta.Type == "text_delta" {
@@ -436,6 +491,59 @@ func handleLine(l streamLine, agentName string, limit int, emit func(Event) erro
 		return true, nil
 	}
 	return false, nil
+}
+
+// keyRefused says what to check when the provider refuses the key.
+func keyRefused(p Provider, r *Retrying) error {
+	status := 401
+	if r != nil {
+		status = r.Status
+	}
+	msg := fmt.Sprintf("the provider refused the key (%d), twice", status)
+	switch {
+	case p.KeyHelper != "":
+		msg += ": your apiKeyHelper (in " + strings.Join(p.Sources, ", ") + ") did not give a valid token. " +
+			"Run it in a terminal to see what it prints: " + p.KeyHelper
+	case p.Get("ANTHROPIC_BASE_URL") != "":
+		msg += ": check ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY in your Claude settings"
+	default:
+		msg += ": run claude and type /login"
+	}
+	return errors.New(msg + " · tubas doctor checks it step by step")
+}
+
+// stoppedEarly says why claude stopped before answering: the provider
+// problem it last retried, what it printed, how it exited.
+func stoppedEarly(waitErr error, stderr string, st streamState) error {
+	var parts []string
+	if st.retry != nil {
+		parts = append(parts, st.retry.Problem())
+	}
+	if tail := lastLines(stderr, 3); tail != "" {
+		parts = append(parts, tail)
+	}
+	parts = append(parts, st.noise...)
+	if waitErr != nil {
+		parts = append(parts, "claude exited: "+waitErr.Error())
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "it printed nothing")
+	}
+	return explain("stopped before answering: " + strings.Join(parts, " · ") + " · tubas doctor checks your setup step by step")
+}
+
+// lastLines is the end of what a program printed, on one line.
+func lastLines(s string, n int) string {
+	var lines []string
+	for _, l := range strings.Split(strings.TrimSpace(s), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, " · ")
 }
 
 // explain turns what claude says when a turn fails into what to do.
