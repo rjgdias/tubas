@@ -32,7 +32,9 @@ func renderMarkdown(text string, w int) []string {
 		case strings.HasPrefix(trimmed, "```"):
 			inFence = !inFence
 		case inFence: // code: a bar on the left sets it apart from the text
-			out = append(out, hang(faintStyle.Render("▏ "), codeStyle.Render(line), w)...)
+			for _, l := range wrap(codeStyle.Render(line), max(10, w-2)) {
+				out = append(out, faintStyle.Render("▏ ")+l) // the bar on wrapped lines too
+			}
 		case trimmed == "":
 			if len(out) > 0 && out[len(out)-1] != "" {
 				out = append(out, "") // collapse runs of blank lines
@@ -166,32 +168,56 @@ func renderTable(rows []string, w int) []string {
 				widest = j
 			}
 		}
-		if widths[widest] <= 4 {
+		if widths[widest] <= 8 {
 			break
 		}
 		widths[widest]--
 	}
-	var out []string
+	// A cell longer than its column wraps inside it: nothing is cut. When
+	// any row takes more than one line, a blank line keeps rows apart.
+	grid := make([][][]string, len(cells))
+	loose := false
 	for i, c := range cells {
-		var b strings.Builder
+		grid[i] = make([][]string, cols)
 		for j := 0; j < cols; j++ {
 			cell := ""
 			if j < len(c) {
 				cell = stripInline(c[j])
 			}
-			cell = padRight(ansi.Truncate(cell, widths[j], "…"), widths[j])
-			if i == header {
-				b.WriteString(boldStyle.Render(cell))
-			} else {
-				b.WriteString(textStyle.Render(cell))
-			}
-			if j < cols-1 {
-				b.WriteString(strings.Repeat(" ", gap))
-			}
+			grid[i][j] = strings.Split(ansi.Wrap(cell, widths[j], ""), "\n")
+			loose = loose || len(grid[i][j]) > 1
 		}
-		out = append(out, strings.TrimRight(b.String(), " "))
-		if i == header {
+	}
+	var out []string
+	for i, row := range grid {
+		height := 1
+		for _, cell := range row {
+			height = max(height, len(cell))
+		}
+		for k := 0; k < height; k++ {
+			var b strings.Builder
+			for j, cell := range row {
+				text := ""
+				if k < len(cell) {
+					text = strings.TrimRight(cell[k], " ")
+				}
+				text = padRight(text, widths[j])
+				if i == header {
+					b.WriteString(boldStyle.Render(text))
+				} else {
+					b.WriteString(textStyle.Render(text))
+				}
+				if j < cols-1 {
+					b.WriteString(strings.Repeat(" ", gap))
+				}
+			}
+			out = append(out, strings.TrimRight(b.String(), " "))
+		}
+		switch {
+		case i == header:
 			out = append(out, faintStyle.Render(strings.Repeat("─", min(w, sum(widths)+gap*(cols-1)))))
+		case loose && i < len(grid)-1:
+			out = append(out, "")
 		}
 	}
 	return out

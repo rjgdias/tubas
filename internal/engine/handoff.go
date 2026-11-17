@@ -66,9 +66,18 @@ func SystemPrompt(a agent.Agent, team map[string]agent.Agent) string {
 	var b strings.Builder
 	b.WriteString(a.Instructions)
 	b.WriteString("\n\n## Working in tubas\n\n")
-	fmt.Fprintf(&b, "You are @%s (%s), one agent in a team. Each turn you get a task, do it, and answer.\n", a.Name, a.Role)
+	// Alone, it is a plain chat: no talk of a team the person never made.
+	solo := len(team) <= 1
+	if solo {
+		b.WriteString("You are chatting with a person in tubas, a chat in their terminal. " +
+			"Earlier messages of the conversation, when there are any, come before the new question.\n")
+	} else {
+		fmt.Fprintf(&b, "You are @%s (%s), one agent in a team. Each turn you get a task, do it, and answer.\n", a.Name, a.Role)
+	}
 
-	if len(a.CanCall) > 0 {
+	switch {
+	case solo:
+	case len(a.CanCall) > 0:
 		b.WriteString("\nTeammates you can hand work to:\n")
 		names := append([]string(nil), a.CanCall...)
 		sort.Strings(names)
@@ -82,10 +91,12 @@ func SystemPrompt(a agent.Agent, team map[string]agent.Agent) string {
 			b.WriteString("They work in parallel, answer back, and you get a new turn with all their answers to conclude.\n")
 		}
 		b.WriteString("Hand off only when someone else must act. If the work is done, just answer without a HANDOFF line.\n")
-	} else {
+	default:
 		b.WriteString("\nYou cannot hand work to anyone: finish the task yourself.\n")
 	}
-	if access := a.Tools["workspace"]; access == "read" || access == "write" {
+	if access := a.Tools["workspace"]; (access == "read" || access == "write") && solo {
+		b.WriteString("\nYou have a folder of your own that survives between conversations (workspace tools): keep there what you will want next time.\n")
+	} else if access == "read" || access == "write" {
 		b.WriteString("\nYou have a workspace folder of your own that survives between sessions, and the team has a shared folder (workspace tools). ")
 		b.WriteString("Look there at the start of a task, and keep there what you will want next time: notes, queries that worked, decisions.\n")
 	}
@@ -100,7 +111,9 @@ func SystemPrompt(a agent.Agent, team map[string]agent.Agent) string {
 		b.WriteString("\nYou may propose new agents and routines (propose_agent, propose_routine) when the team lacks someone for recurring work. A human approves each one.\n")
 	}
 	b.WriteString("\nWork in few steps: every step costs the whole conversation again. When you need several independent lookups, call those tools together in the same step, not one by one. What you need to know about a tool is in its description: do not spend steps rediscovering it.\n")
-	b.WriteString("Keep the answer short: the conclusion first, then the numbers behind it.\n")
+	if !solo {
+		b.WriteString("Keep the answer short: the conclusion first, then the numbers behind it.\n")
+	}
 	b.WriteString("Tools that change anything wait for a human to approve; if one is denied, say so and stop.\n")
 	return b.String()
 }

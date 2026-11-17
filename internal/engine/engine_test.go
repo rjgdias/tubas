@@ -323,8 +323,22 @@ func TestSystemPromptExplainsHandoff(t *testing.T) {
 			t.Errorf("system prompt should contain %q", want)
 		}
 	}
-	if p := SystemPrompt(agent.Agent{Name: "solo"}, nil); !strings.Contains(p, "cannot hand work") {
+	if p := SystemPrompt(demoTeam["leo"], map[string]agent.Agent{"leo": demoTeam["leo"], "x": {}}); len(demoTeam["leo"].CanCall) == 0 && !strings.Contains(p, "cannot hand work") {
 		t.Error("an agent with no can_call should be told it cannot hand off")
+	}
+	// Alone, it is a plain chat: nothing about a team or handing off.
+	alone := agent.Agent{Name: "tubas", Role: "assistant"}
+	p = SystemPrompt(alone, map[string]agent.Agent{"tubas": alone})
+	for _, unwanted := range []string{"team", "hand", "numbers"} {
+		if strings.Contains(strings.ToLower(p), unwanted) {
+			t.Errorf("a lone assistant's prompt mentions %q:\n%s", unwanted, p)
+		}
+	}
+	if !strings.Contains(p, "chatting with a person") {
+		t.Errorf("a lone assistant is told it is a chat:\n%s", p)
+	}
+	if p := SystemPrompt(agent.Agent{Name: "x"}, map[string]agent.Agent{"x": {}, "y": {}}); !strings.Contains(p, "cannot hand work") {
+		t.Error("in a team, an agent with no can_call is told it cannot hand off")
 	}
 }
 

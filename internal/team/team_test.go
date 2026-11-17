@@ -101,3 +101,17 @@ func TestDefaultsAndPrepare(t *testing.T) {
 		t.Errorf("Prepare should create the seeded database: %v", err)
 	}
 }
+
+func TestALoneAssistantDoesNotBuildTeams(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	tm, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access, ok := tm.Agents[0].Tools["team"]; ok {
+		t.Errorf("a plain chat's assistant gets no team tools, got team: %s", access)
+	}
+}

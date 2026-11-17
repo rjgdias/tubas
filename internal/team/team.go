@@ -176,8 +176,11 @@ func Load(dir string) (Team, error) {
 		if _, ok := a.Tools["workspace"]; !ok {
 			a.Tools["workspace"] = "write"
 		}
-		if _, ok := a.Tools["team"]; !ok && a.Name == t.Lead {
-			a.Tools["team"] = "write" // the lead may propose; you still approve each one
+		// The lead of a team may propose agents; you still approve each
+		// one. A lone assistant is a plain chat: it doesn't build teams
+		// unless its file asks for it (tools: { team: write }).
+		if _, ok := a.Tools["team"]; !ok && a.Name == t.Lead && len(t.Agents) > 1 {
+			a.Tools["team"] = "write"
 		}
 		if _, ok := a.Tools["skills"]; !ok && len(a.Skills) > 0 {
 			a.Tools["skills"] = "read"
