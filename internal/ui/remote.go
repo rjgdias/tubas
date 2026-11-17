@@ -293,6 +293,12 @@ func (m Model) pickerKey(key string) (Model, tea.Cmd) {
 		if m.pickIdx < len(list) {
 			return m.askDelete(list[m.pickIdx]), nil
 		}
+	case "r":
+		if m.pickIdx < len(list) {
+			if menu := m.menuFor(sideRow{ws: -1, tab: -1, session: list[m.pickIdx].ID}, bodyX+4, bodyY+2+m.pickIdx); menu != nil {
+				return m.menuAction(menu, "rename")
+			}
+		}
 	}
 	return m, nil
 }
@@ -337,7 +343,7 @@ func (m Model) conversationDeleted(msg conversationDeletedMsg) (Model, tea.Cmd) 
 }
 
 func (m Model) viewPicker(cw, h int) []string {
-	lines := []string{boldStyle.Render("conversations") + dimStyle.Render(" · enter shows one · d deletes · ctrl+n starts a new one"), ""}
+	lines := []string{boldStyle.Render("conversations") + dimStyle.Render(" · enter shows one · r renames · d deletes · ctrl+n new · right click: menu"), ""}
 	list := m.conversations()
 	if len(list) == 0 {
 		return fitHeight(append(lines, dimStyle.Render("none yet · ask something and it becomes one")), h, false)

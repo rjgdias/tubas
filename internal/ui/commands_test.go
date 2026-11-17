@@ -174,3 +174,119 @@ func TestPlainChatSidebarHasNoWorkspaceTree(t *testing.T) {
 		t.Errorf("and it is gone from the sidebar:\n%s", text)
 	}
 }
+
+// rightClickAt presses the right button at a screen cell.
+func rightClickAt(m Model, x, y int) Model {
+	next, _ := m.Update(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonRight, Action: tea.MouseActionPress})
+	return next.(Model)
+}
+
+func TestRightClickRenamesAndDeletes(t *testing.T) {
+	scripts := map[string]engine.Script{"leo": {Summary: "feito"}}
+	m, _, c := remoteModel(t, scripts)
+	host := &fakeHost{}
+	m.cfg.Panes = host
+	m.panes = newPaneState(host)
+	m = feed(m, tea.WindowSizeMsg{Width: 140, Height: 32})
+	m, _ = m.panesLoaded(panesLoadedMsg{})
+	for _, q := range []string{"@leo um", "@leo dois"} {
+		info, _ := c.Start(server.StartRequest{Target: "leo", Question: q})
+		c.Wait(info.ID, []string{server.Done}, 5*time.Second)
+	}
+	m = feed(m, status(t, c))
+	t.Cleanup(m.Stop)
+	_, rows := m.sidebarLines(sidebarW, m.bodyHeight())
+	row := -1
+	for i, r := range rows {
+		if r.session != "" && row < 0 {
+			row = i
+		}
+	}
+	if row < 0 {
+		t.Fatal("a conversation row in the sidebar")
+	}
+	// Right click: a menu with Rename and Delete, drawn where clicked.
+	m = rightClickAt(m, bodyX+4, bodyY+row)
+	if m.menu == nil || len(m.menu.items) != 2 || m.menu.items[0].action != "rename" {
+		t.Fatalf("a right click opens the menu: %+v", m.menu)
+	}
+	frame := ansi.Strip(m.View())
+	if !strings.Contains(frame, "Rename") || !strings.Contains(frame, "Delete") {
+		t.Fatalf("the menu is on screen:\n%s", frame)
+	}
+	// Rename: the field starts with the name; type a new one, enter.
+	id := m.menu.row.session
+	m = m.PressKeys("enter", "ctrl+u")
+	if !m.menu.renaming {
+		t.Fatal("Rename turns the menu into a text field")
+	}
+	m = m.PressKeys("minha", "space", "conversa")
+	next, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(next.(Model), cmd())
+	m = feed(m, status(t, c))
+	found := false
+	for _, cv := range m.conversations() {
+		if cv.ID == id && cv.Title == "minha conversa" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("renamed on the server: %+v", m.conversations())
+	}
+	// Delete asks in the menu; "Yes, delete" deletes.
+	m = rightClickAt(m, bodyX+4, bodyY+row)
+	m = m.PressKeys("down", "enter")
+	if m.menu == nil || m.menu.items[0].action != "confirm" {
+		t.Fatalf("Delete asks first: %+v", m.menu)
+	}
+	m = m.PressKeys("up")
+	next, cmd = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = feed(next.(Model), cmd())
+	m = feed(m, status(t, c))
+	if len(m.conversations()) != 1 {
+		t.Errorf("deleted: %d conversations left", len(m.conversations()))
+	}
+	// A click outside closes a menu.
+	m = rightClickAt(m, bodyX+4, bodyY+row)
+	m, _ = clickAt(m, bodyX+80, bodyY+10)
+	if m.menu != nil {
+		t.Error("a click outside closes the menu")
+	}
+}
+
+func TestMenuRenamesWorkspacesAndClosesTabs(t *testing.T) {
+	m, host := paneModelSized(t, 140, 30, nil)
+	m, _ = m.panesLoaded(panesLoadedMsg{})
+	m = openPane(t, m, "c") // a new tab with a terminal
+	ps := m.panes
+	if len(ps.space().Tabs) != 2 {
+		t.Fatalf("two tabs: %d", len(ps.space().Tabs))
+	}
+	// Rename the workspace.
+	menu := m.menuFor(sideRow{ws: 0, tab: -1}, 2, 4)
+	m, _ = m.menuAction(menu, "rename")
+	m = m.PressKeys("ctrl+u", "trabalho", "enter")
+	if ps.spaces[0].Name != "trabalho" || m.menu != nil {
+		t.Errorf("renamed: %q", ps.spaces[0].Name)
+	}
+	// Close the terminal's tab: it goes, the chat's stays.
+	menu = m.menuFor(sideRow{ws: 0, tab: 1}, 2, 6)
+	m, _ = m.menuAction(menu, "delete")
+	m, cmd := m.menuAction(m.menu, "confirm")
+	runAll(cmd)
+	if len(ps.spaces[0].Tabs) != 1 || !hasChat(ps.spaces[0]) || len(host.closed) != 1 {
+		t.Errorf("the tab and its terminal are closed: %d tabs, closed %v", len(ps.spaces[0].Tabs), host.closed)
+	}
+}
+
+// runAll runs a command and every command in a batch it returns.
+func runAll(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			runAll(c)
+		}
+	}
+}

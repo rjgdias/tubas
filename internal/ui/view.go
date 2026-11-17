@@ -38,6 +38,9 @@ func (m Model) View() string {
 	for i, l := range lines {
 		lines[i] = " " + l
 	}
+	if m.menu != nil {
+		lines = m.withMenu(lines)
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -885,6 +888,7 @@ func (m Model) withHelp(base []string, cw int) []string {
 		{"commands", "/", "every command, filtered as you type"},
 		{"", "/new /retry", "new conversation · ask again"},
 		{"", "/delete", "delete this conversation (ctrl+g, d: another)"},
+		{"", "right click", "a conversation, tab or workspace: rename, delete"},
 		{"", "/copy /export", "copy the answer · save as Markdown"},
 		{"", "/model /usage", "change the model · what it cost"},
 		{"", "/mcp /skills", "tools · skills (/name runs a skill)"},

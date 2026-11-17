@@ -266,6 +266,11 @@ func (c *Client) RunRoutine(name string) (Info, error) {
 }
 
 // DismissNote removes a routine's note.
+// RenameConversation gives a conversation a new title.
+func (c *Client) RenameConversation(id, title string) error {
+	return c.do("PATCH", "/conversations/"+url.PathEscape(id), map[string]string{"title": title}, nil, 10*time.Second)
+}
+
 // DeleteConversation removes a conversation and every message in it.
 func (c *Client) DeleteConversation(id string) error {
 	return c.do("DELETE", "/conversations/"+url.PathEscape(id), nil, nil, 10*time.Second)

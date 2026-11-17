@@ -296,7 +296,7 @@ func TestTabsAndWorkspaces(t *testing.T) {
 		t.Fatalf("ctrl+b c opens a new tab: %+v", ws.Tabs)
 	}
 	frame := ansi.Strip(m.Snapshot(140, 32))
-	contains(t, frame, "2 shell", "api", "ctrl+b b hide") // the sidebar
+	contains(t, frame, "2 shell", "api", "right click: menu") // the sidebar
 	m = keys(m, "ctrl+b", "1")
 	if m.panes.space().Tab != 0 || m.panes.focus() != chatPane {
 		t.Error("ctrl+b 1 shows the first tab")

@@ -160,6 +160,7 @@ type Model struct {
 	gatewayNote string       // why the gateway's models are missing, when they are
 	mcp         *mcpView     // /mcp: the MCP servers, open over the chat
 	deleting    string       // a conversation waiting for y to be deleted
+	menu        *ctxMenu     // the right-click menu, when open
 	// aliases are what your Claude settings make sonnet, opus and haiku
 	// mean; with a gateway that lists its models, only those show.
 	aliases     map[string]string
@@ -414,6 +415,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case conversationDeletedMsg:
 		return m.conversationDeleted(msg)
 
+	case conversationRenamedMsg:
+		return m.conversationRenamed(msg)
+
 	case providersMsg:
 		m.providers = msg
 		m.gatewayNote = ""
@@ -498,6 +502,10 @@ func (m Model) handle(e engine.Event) Model {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	// The right-click menu takes the keys while it is open.
+	if m.menu != nil {
+		return m.menuKey(msg)
+	}
 	// The model picker (/model) takes every key until it closes.
 	if m.modelPick != nil {
 		return m.modelPickerKey(msg)

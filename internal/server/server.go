@@ -389,6 +389,47 @@ func (s *Server) DeleteConversation(id string) (int, error) {
 	return len(gone), nil
 }
 
+// RenameConversation gives a conversation a title of your choosing: every
+// session in it gets it, saved for the next restart.
+func (s *Server) RenameConversation(id, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return errors.New("the name is empty")
+	}
+	s.mu.Lock()
+	var finished []*session
+	for _, ss := range s.sessions {
+		conv := ss.Conversation
+		if conv == "" {
+			conv = ss.ID
+		}
+		if conv != id || ss.Kind == "routine" {
+			continue
+		}
+		ss.Title = title
+		if !ss.running {
+			finished = append(finished, ss)
+		}
+	}
+	found := len(finished) > 0
+	for _, ss := range s.sessions {
+		if (ss.Conversation == id || ss.ID == id) && ss.running {
+			found = true // saved when it ends, with the new title
+		}
+	}
+	if found {
+		s.notify()
+	}
+	s.mu.Unlock()
+	if !found {
+		return fmt.Errorf("no conversation %s", id)
+	}
+	for _, ss := range finished {
+		s.save(ss)
+	}
+	return nil
+}
+
 // Seen marks a session as looked at: done becomes idle.
 func (s *Server) Seen(id string) {
 	s.mu.Lock()
@@ -843,6 +884,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /routines/{name}/run", func(w http.ResponseWriter, r *http.Request) {
 		info, err := s.RunRoutine(r.PathValue("name"))
 		reply(w, info, err)
+	})
+	mux.HandleFunc("PATCH /conversations/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Title string `json:"title"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		reply(w, map[string]bool{"ok": true}, s.RenameConversation(r.PathValue("id"), body.Title))
 	})
 	mux.HandleFunc("DELETE /conversations/{id}", func(w http.ResponseWriter, r *http.Request) {
 		n, err := s.DeleteConversation(r.PathValue("id"))

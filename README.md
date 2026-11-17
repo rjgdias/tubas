@@ -223,7 +223,7 @@ Type `/` in the chat: every command, with what it does, filtered as you type (by
 | Command | What it does |
 | --- | --- |
 | `/new` (`/clear`) | a new conversation; the one on screen keeps running |
-| `/conversations` (`/resume`) | your conversations, with their state (`ctrl+g`); `d` deletes one |
+| `/conversations` (`/resume`) | your conversations, with their state (`ctrl+g`); `r` renames one, `d` deletes one |
 | `/delete` | delete the conversation on screen (it asks first) |
 | `/retry` · `/stop` | ask the last question again · stop the answer that is coming |
 | `/copy` | copy the last answer |
@@ -276,6 +276,7 @@ Almost everything you reach with a key, you can click. `tubas -mouse=false` leav
 | the border between two panes | drag it to resize them |
 | `y` · `n` · `v` on an approval bar | approve · deny · details |
 | a row in the conversation list or in a section's list | shows or selects it |
+| right click on a conversation, a tab or a workspace (sidebar or list) | a menu: rename it, or delete it (it asks in the menu first) |
 
 The wheel scrolls a terminal's history or the chat.
 
@@ -326,6 +327,7 @@ Not every agent is a tubas agent. A pane is a real terminal inside tubas: claude
 | `ctrl+b` then `w` | the next workspace |
 | `ctrl+b` then `N` | a new workspace, for any folder |
 | `ctrl+b` then `X` | close the workspace and its terminals, after asking; the team's own (`personal`, say) leaves the sidebar and only the chat stays |
+| `ctrl+b` then `,` · `$` | rename the tab · the workspace |
 | `ctrl+b` then `b` | show or hide the sidebar |
 | `ctrl+b` then `z` | zoom the focused pane, again to go back |
 | `ctrl+b` then `[` | scroll back through the pane (copy mode) |

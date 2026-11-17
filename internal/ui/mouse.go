@@ -35,6 +35,10 @@ func (m Model) mouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if m.showHelp || m.width == 0 {
 		return m, nil
 	}
+	if m.menu != nil {
+		return m.menuClick(msg)
+	}
+	right := msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight
 	wheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown
 	up := msg.Button == tea.MouseButtonWheelUp
 	press := msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft
@@ -67,8 +71,16 @@ func (m Model) mouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case m.picker:
-		if convs := m.conversations(); press && by >= 2 && by-2 < len(convs) {
-			return m.attachConversation(convs[by-2])
+		convs := m.conversations()
+		if by >= 2 && by-2 < len(convs) {
+			if right {
+				m.pickIdx = by - 2
+				m.menu = m.menuFor(sideRow{ws: -1, tab: -1, session: convs[by-2].ID}, msg.X, msg.Y)
+				return m, nil
+			}
+			if press {
+				return m.attachConversation(convs[by-2])
+			}
 		}
 		return m, nil
 	case m.review:
@@ -85,6 +97,11 @@ func (m Model) mouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if m.sidebarShown() && bx < sidebarW {
 		if press {
 			return m.clickSidebar(by, bodyH)
+		}
+		if right {
+			if _, rows := m.sidebarLines(sidebarW, bodyH); by < len(rows) {
+				m.menu = m.menuFor(rows[by], msg.X, msg.Y)
+			}
 		}
 		return m, nil
 	}

@@ -469,6 +469,16 @@ func (m Model) paneKey(key string) (Model, tea.Cmd, bool) {
 	case "N":
 		m.section = SecChat
 		return m.newWorkspaceForm(), nil, true
+	case ",", "$": // rename the tab, or the workspace (as tmux)
+		row := sideRow{ws: ps.ws, tab: ws.Tab}
+		if key == "$" {
+			row.tab = -1
+		}
+		if menu := m.menuFor(row, bodyX+2, bodyY+1); menu != nil {
+			mm, cmd := m.menuAction(menu, "rename")
+			return mm, cmd, true
+		}
+		return m, nil, true
 	case "X":
 		n := 0
 		for _, t := range ws.Tabs {
