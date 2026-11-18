@@ -257,7 +257,7 @@ func (m Model) sectionBottom(cw int) []string {
 	keys, where := "", ""
 	switch m.section {
 	case SecInbox:
-		keys = "↑↓ item · y/n answer"
+		keys = "↑↓ item · y approve · n deny"
 		if m.inboxCount() == 0 {
 			keys = "1 back to the chat"
 		}
@@ -282,11 +282,13 @@ func (m Model) sectionBottom(cw int) []string {
 	if !(m.section == SecAgents && (m.permMode || m.skillsMode)) {
 		keys += " · esc chat"
 	}
-	left := dimStyle.Render(keys)
+	// The keys stay (they are buttons too); a notice takes the right side,
+	// where the file name goes otherwise.
+	left, right := dimStyle.Render(keys), faintStyle.Render(where)
 	if m.notice != "" {
-		left = m.notice
+		right = m.notice
 	}
-	return []string{"", faintStyle.Render(strings.Repeat("─", cw)), spread(fit(left, cw-lipgloss.Width(where)-2), faintStyle.Render(where), cw)}
+	return []string{"", faintStyle.Render(strings.Repeat("─", cw)), spread(fit(left, cw-lipgloss.Width(right)-2), right, cw)}
 }
 
 // panes puts a list and a detail side by side, with a thin rule between.
@@ -442,7 +444,7 @@ func (m Model) viewAgents(cw, h int) []string {
 		"",
 		kv("model", or(a.Model, "default")),
 		kv("effort", or(a.Effort, "model's default")),
-		kv("runs on", or(a.Harness, "claude")+dimStyle.Render(" · ")+or(a.Provider, "anthropic")),
+		kv("provider", or(a.Provider, "anthropic")),
 	}
 	if a.TokenLimit > 0 {
 		right = append(right, kv("token limit", textStyle.Render(fmtTokens(a.TokenLimit))))
@@ -651,19 +653,16 @@ func (m Model) viewSettings(cw int) []string {
 		kv("lead", m.agentStyle(m.cfg.Lead).Render(m.cfg.Lead)+dimStyle.Render(" · answers when nobody fits, may propose agents")),
 		kv("hops", textStyle.Render(fmt.Sprintf("%d per question", m.cfg.MaxHops))),
 		"",
-		sec("Harnesses and providers"),
-		kv("available", textStyle.Render(orDefault(strings.Join(m.cfg.Harnesses, " · "), m.engineName()))),
+		sec("providers"),
+		kv("runs on", textStyle.Render(m.engineName())+dimStyle.Render(" · tubas runs every agent itself")),
 	}
-	if m.providers == nil && m.cfg.TeamDir != "" {
-		lines = append(lines, kv("", dimStyle.Render("looking…")))
-	}
-	for _, p := range m.providers {
-		mark := dimStyle.Render("○ ")
-		if p.Ready {
-			mark = okStyle.Render("● ")
+	for _, c := range m.connections() {
+		if !c.Ready() {
+			continue
 		}
-		lines = append(lines, kv("", mark+textStyle.Render(fmt.Sprintf("%-14s", p.Name))+dimStyle.Render(p.Detail)))
+		lines = append(lines, kv("", okStyle.Render("● ")+textStyle.Render(fmt.Sprintf("%-14s", c.Name))+dimStyle.Render(orDefault(c.Detail, c.State))))
 	}
+	lines = append(lines, kv("", hiStyle.Render("/connect")+dimStyle.Render(" adds a provider or a key")))
 	quiet := m.routines.QuietHours
 	if quiet == "" {
 		quiet = "none"

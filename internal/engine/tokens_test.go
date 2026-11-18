@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -33,22 +31,6 @@ func TestBriefCutsLongAnswers(t *testing.T) {
 	}
 	if brief("curto.") != "curto." {
 		t.Error("short answers stay as they are")
-	}
-}
-
-// The recorded stream carries the cost and the cache split.
-func TestParseReadsCostAndCache(t *testing.T) {
-	data, _ := os.ReadFile(filepath.Join("testdata", "text_only.jsonl"))
-	_, reply, err := collectStream(t, string(data), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reply.Cost != 0.000205 || reply.Cached != 0 {
-		t.Errorf("cost %v, cached %d", reply.Cost, reply.Cached)
-	}
-	_, reply, _ = collectStream(t, toolStream, 0)
-	if reply.Cached != 30 {
-		t.Errorf("cached = %d, want 30", reply.Cached)
 	}
 }
 

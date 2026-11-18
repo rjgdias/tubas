@@ -1,58 +1,17 @@
 package engine
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"tubas/internal/agent"
 )
 
-// TestMain lets the test binary stand in for claude: started with
-// TUBAS_FAKE_CLAUDE=1, it answers one turn with what it sees in its
-// environment, so a test can check what tubas passed on.
+// TestMain lets the test binary stand in for the gateway (tubas mcp).
 func TestMain(m *testing.M) {
-	if os.Getenv("TUBAS_FAKE_CLAUDE") == "args" { // answers with how it was started
-		wd, _ := os.Getwd()
-		seen, _ := json.Marshal(map[string]any{"args": os.Args[1:], "dir": wd})
-		line, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "result": string(seen)})
-		fmt.Println(string(line))
-		os.Exit(0)
-	}
 	if os.Getenv("TUBAS_FAKE_MCP") != "" {
 		fakeMCP()
-		os.Exit(0)
-	}
-	if os.Getenv("TUBAS_FAKE_ACP") != "" {
-		fakeACP()
-		os.Exit(0)
-	}
-	if mode := os.Getenv("TUBAS_FAKE_CODEX"); mode != "" {
-		fakeCodex(mode)
-		os.Exit(0)
-	}
-	if os.Getenv("TUBAS_FAKE_CLAUDE") == "provider" { // answers with the provider variables and the model asked
-		model := ""
-		for i, a := range os.Args {
-			if a == "--model" && i+1 < len(os.Args) {
-				model = os.Args[i+1]
-			}
-		}
-		seen, _ := json.Marshal(map[string]string{"base": os.Getenv("ANTHROPIC_BASE_URL"), "token": os.Getenv("ANTHROPIC_AUTH_TOKEN"),
-			"apikey": os.Getenv("ANTHROPIC_API_KEY"), "envmodel": os.Getenv("ANTHROPIC_DEFAULT_SONNET_MODEL"), "model": model})
-		line, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "result": string(seen), "total_cost_usd": 0.5})
-		fmt.Println(string(line))
-		os.Exit(0)
-	}
-	if os.Getenv("TUBAS_FAKE_CLAUDE") == "1" {
-		seen := fmt.Sprintf("base=%s token=%s other=%s",
-			os.Getenv("ANTHROPIC_BASE_URL"), os.Getenv("ANTHROPIC_AUTH_TOKEN"), os.Getenv("SOME_OTHER_SETTING"))
-		line, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "result": seen})
-		fmt.Println(string(line))
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -151,40 +110,9 @@ func TestSettingsBooleansBecomeStrings(t *testing.T) {
 	}
 }
 
-func TestEnvironOverridesThisProcess(t *testing.T) {
-	t.Setenv("ANTHROPIC_BASE_URL", "https://old.example.com")
-	t.Setenv("TUBAS_KEEP_ME", "yes")
-	env := Provider{Env: map[string]string{"ANTHROPIC_BASE_URL": "https://llm.acme.internal"}}.Environ()
-	joined := "\n" + strings.Join(env, "\n") + "\n"
-	if !strings.Contains(joined, "\nANTHROPIC_BASE_URL=https://llm.acme.internal\n") || strings.Contains(joined, "old.example.com") {
-		t.Errorf("the settings' value should replace the shell's")
-	}
-	if !strings.Contains(joined, "\nTUBAS_KEEP_ME=yes\n") {
-		t.Errorf("the rest of the environment should stay")
-	}
-}
-
-// End to end: the claude process an agent turn starts gets the gateway
-// from the settings, and nothing else from them.
-func TestAgentTurnReachesTheGateway(t *testing.T) {
+func TestTheHeaderNamesTheGateway(t *testing.T) {
 	project := workSetup(t)
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TUBAS_FAKE_CLAUDE", "1")
-
-	eng := ClaudeEngine{Command: exe, WorkDir: project, Provider: FindProvider(project)}
-	out := make(chan Event, 16)
-	reply, err := eng.RunTurn(context.Background(), TurnRequest{Agent: agent.Agent{Name: "iris", Model: "haiku"}, Prompt: "hi"}, out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "base=https://llm.acme.internal/claude token=project-token other=stays out"
-	if reply.Text != want {
-		t.Errorf("claude saw %q, want %q", reply.Text, want)
-	}
-	if got := eng.Name(); got != "claude · gateway llm.acme.internal" {
+	if got := (NativeEngine{Setup: FindProvider(project)}).Name(); got != "native · gateway llm.acme.internal" {
 		t.Errorf("name = %q", got)
 	}
 }

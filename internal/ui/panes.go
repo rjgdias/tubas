@@ -13,7 +13,6 @@ import (
 
 	"tubas/internal/pane"
 	"tubas/internal/repo"
-	"tubas/internal/server"
 )
 
 // ── panes: real terminals next to the chat ──────────────────────────────
@@ -661,22 +660,20 @@ func (m Model) closePaneCmd(id string) tea.Cmd {
 
 // newPaneForm asks what to run and where. dir is right, down or tab.
 func (m Model) newPaneForm(dir string, agentFirst bool) Model {
-	runs := []string{"shell"}
-	runs = append(runs, pane.Agents(server.Resolve)...)
-	runs = append(runs, "command")
+	runs := []string{"shell", "command"}
 	where, show := m.paneWhere()
 	side := map[string]string{"right": "to the right", "down": "below", "tab": "in a new tab"}[dir]
 	f := &form{kind: "pane", title: "new pane " + side + " · " + m.panes.space().Name, extra: dir}
 	f.fields = []field{
-		{key: "run", label: "run", kind: fChoice, options: runs, value: "shell", hint: "←→ choose · your shell, an agent CLI or any command"},
-		{key: "command", label: "command", kind: fText, hint: "empty runs your shell · flags welcome: claude --model sonnet"},
+		{key: "run", label: "run", kind: fChoice, options: runs, value: "shell", hint: "←→ choose · your shell, or any command"},
+		{key: "command", label: "command", kind: fText, hint: "empty runs your shell · flags welcome: npm run dev"},
 		{key: "where", label: "where", kind: fChoice, options: where, show: show,
 			hint: "a new worktree gets its own branch; your checkout stays untouched"},
 		{key: "title", label: "title", kind: fText, hint: "optional · shown on the pane and its tab"},
 	}
 	m.form = f
-	if agentFirst && len(runs) > 2 {
-		f.set("run", runs[1])
+	if agentFirst {
+		f.set("run", "command")
 	}
 	return m.paneFormRunChanged()
 }

@@ -89,16 +89,16 @@ func (c Connector) Runs() string {
 
 // ProviderConfig is a model provider from team.yaml.
 type ProviderConfig struct {
-	Anthropic string   `yaml:"anthropic"` // an Anthropic-compatible base URL (claude and api harnesses)
-	OpenAI    string   `yaml:"openai"`    // an OpenAI-compatible base URL (api harness)
+	Anthropic string   `yaml:"anthropic"` // an Anthropic-compatible base URL
+	OpenAI    string   `yaml:"openai"`    // an OpenAI-compatible base URL
 	KeyEnv    string   `yaml:"key_env"`   // the environment variable holding the key
 	Models    []string `yaml:"models"`
 	// Prices, per model, in US$ per million tokens: [input, cached input,
-	// output]. The api harness shows a turn's cost with them.
+	// output]. A turn's cost is shown with them.
 	Prices map[string][3]float64 `yaml:"prices"`
 }
 
-// HarnessConfig is an agent CLI from team.yaml, run through ACP.
+// HarnessConfig is an agent CLI an older team.yaml listed: read, ignored.
 type HarnessConfig struct {
 	ACP string `yaml:"acp"` // the command that starts it in ACP mode, like "dsh --profile acp"
 }
@@ -113,6 +113,10 @@ type Team struct {
 	MaxHops    int                  `yaml:"max_hops"`
 	Notify     string               `yaml:"notify"` // all (default), window or off: see Notifications in the README
 	Connectors map[string]Connector `yaml:"connectors"`
+	// AllowCommands are shell commands agents run without asking you:
+	// prefixes like "go test" or "npm run lint". Anything chained after
+	// them (; && | $( ) still asks.
+	AllowCommands []string `yaml:"allow_commands"`
 
 	// Provider is where agents' models are served when their file says
 	// nothing: anthropic (your Claude setup, the default), deepseek, glm…
@@ -120,7 +124,7 @@ type Team struct {
 	// Providers adds model providers to the built-in ones. Keys are named
 	// by their environment variable, never written here.
 	Providers map[string]ProviderConfig `yaml:"providers"`
-	// Harnesses adds agent CLIs that speak ACP: name -> its command.
+	// Harnesses is read and ignored: tubas runs every agent itself.
 	Harnesses map[string]HarnessConfig `yaml:"harnesses"`
 	Agents    []agent.Agent            `yaml:"-"`
 }

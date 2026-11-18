@@ -101,6 +101,22 @@ func (b *Broker) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	approved, reason := b.ask(r.Context(), req)
+	writeAnswer(w, ApprovalAnswer{Approved: approved, Reason: reason})
+}
+
+// Ask asks you to approve a call of a turn running in this process (the
+// native tools), the same way the gateway's calls are asked.
+func (b *Broker) Ask(ctx context.Context, turn, agentName, call, detail string) (bool, string, error) {
+	approved, reason := b.ask(ctx, ApprovalRequest{Agent: agentName, Turn: turn, Call: call, Detail: detail})
+	if !approved && ctx.Err() != nil {
+		return false, "", ctx.Err()
+	}
+	return approved, reason, nil
+}
+
+// ask puts the request on the turn's screen and waits for your answer.
+func (b *Broker) ask(ctx context.Context, req ApprovalRequest) (bool, string) {
 	b.mu.Lock()
 	key := req.Turn
 	if key == "" {
@@ -109,21 +125,19 @@ func (b *Broker) handle(w http.ResponseWriter, r *http.Request) {
 	link, ok := b.turns[key]
 	b.mu.Unlock()
 	if !ok {
-		writeAnswer(w, ApprovalAnswer{Reason: "no running turn for " + req.Agent})
-		return
+		return false, "no running turn for " + req.Agent
 	}
-
 	reply := make(chan bool, 1)
 	if send(link.ctx, link.out, ApprovalRequested{Agent: req.Agent, Call: req.Call, Reply: reply, Detail: req.Detail}) != nil {
-		writeAnswer(w, ApprovalAnswer{Reason: "session stopped"})
-		return
+		return false, "session stopped"
 	}
 	select {
 	case approved := <-reply:
-		writeAnswer(w, ApprovalAnswer{Approved: approved})
+		return approved, ""
 	case <-link.ctx.Done():
-		writeAnswer(w, ApprovalAnswer{Reason: "session stopped"})
-	case <-r.Context().Done(): // the MCP server gave up
+		return false, "session stopped"
+	case <-ctx.Done(): // the caller gave up
+		return false, "the call was cancelled"
 	}
 }
 

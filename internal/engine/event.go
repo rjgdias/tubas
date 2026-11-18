@@ -3,6 +3,8 @@ package engine
 import (
 	"fmt"
 	"time"
+
+	"tubas/internal/tools"
 )
 
 // Event is something that happened while agents were working. The engine
@@ -37,6 +39,12 @@ type ToolResult struct {
 	Failed bool
 }
 
+// Todos: the agent's checklist, whole, each time it changes it.
+type Todos struct {
+	Agent string
+	Items []tools.Todo
+}
+
 // TextDelta: a piece of the agent's answer, streamed as it is written.
 type TextDelta struct{ Agent, Text string }
 
@@ -64,15 +72,16 @@ type TurnFinished struct {
 	Plan    bool    // billed to a subscription: no price per turn
 }
 
-// Retrying: the provider failed a request and the harness tries again
+// Retrying: the provider failed a request and tubas tries again
 // (claude retries up to 10 times, minutes in all). Status is the HTTP
 // status, 0 when the gateway could not be reached.
 type Retrying struct {
 	Agent        string
 	Attempt, Max int
 	Status       int
-	Reason       string // claude's word for it: authentication_failed, server_error…
+	Reason       string // the provider's word for it: rate_limited, overloaded, server_error…
 	Delay        time.Duration
+	Partial      bool // text of the failed attempt was already shown: drop it
 }
 
 // Problem says what went wrong, in words: "the gateway refused the key
@@ -122,6 +131,7 @@ func (TurnStarted) isEvent()       {}
 func (ToolCalled) isEvent()        {}
 func (ToolResult) isEvent()        {}
 func (TextDelta) isEvent()         {}
+func (Todos) isEvent()             {}
 func (ApprovalRequested) isEvent() {}
 func (TurnFinished) isEvent()      {}
 func (HandedOff) isEvent()         {}

@@ -214,9 +214,11 @@ func (m Model) viewForm(cw, h int) []string {
 			n := strings.Count(fl.value, "\n") + 1
 			value = textStyle.Render(first) + dimStyle.Render(fmt.Sprintf("  · %d lines · enter edits", n))
 		}
+		// The options come first (they are what you read and click); the
+		// hint gets the room left, shortened, or none.
 		hint := ""
-		if sel && fl.hint != "" {
-			hint = dimStyle.Render(fl.hint)
+		if room := cw - lipgloss.Width(label+value) - 4; sel && fl.hint != "" && room >= 12 {
+			hint = dimStyle.Render(fit(fl.hint, room))
 		}
 		lines = append(lines, spread(fit(label+value, cw-lipgloss.Width(hint)-2), hint, cw))
 	}
@@ -242,7 +244,9 @@ func (m Model) viewForm(cw, h int) []string {
 }
 
 func (m Model) formBottom(cw int) []string {
-	keys := "↑↓ field · ←→ choose · type to edit · enter on a long text opens your editor · ctrl+s save · esc cancel"
+	// Save and cancel first: they are the buttons, and the line is cut at
+	// the end when the window is narrow.
+	keys := "ctrl+s save · esc cancel · ↑↓ field · ←→ or a click chooses · enter on a long text opens your editor"
 	return []string{"", faintStyle.Render(strings.Repeat("─", cw)), spread(dimStyle.Render(fit(keys, cw-lipgloss.Width(m.form.file)-2)), faintStyle.Render(m.form.file), cw)}
 }
 

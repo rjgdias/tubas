@@ -27,7 +27,7 @@ func TestParseValidFile(t *testing.T) {
 		t.Errorf("wrong instructions: %q", a.Instructions)
 	}
 	// Defaults applied to what the file left out:
-	if a.Harness != "claude" || a.Model != "sonnet" || a.TokenLimit != 50000 {
+	if a.Harness != "" || a.Model != "sonnet" || a.TokenLimit != 50000 {
 		t.Errorf("defaults not applied: %+v", a)
 	}
 }
@@ -56,7 +56,6 @@ func TestParseErrors(t *testing.T) {
 		{"no name", "---\nrole: x\n---\nhi\n", "missing the name field"},
 		{"name with space", "---\nname: a b\n---\nhi\n", "invalid name"},
 		{"no instructions", "---\nname: iris\n---\n", "has no instructions"},
-		{"bad harness name", "---\nname: iris\nharness: Foo Bar\n---\nhi\n", "harness"},
 		{"invalid access", "---\nname: iris\ntools:\n  data: all\n---\nhi\n", "access"},
 	}
 	for _, c := range cases {
@@ -110,5 +109,13 @@ func write(t *testing.T, dir, name, content string) {
 	t.Helper() // on failure, the error points at the caller, not here
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A file from before keeps loading: its harness line is read and ignored.
+func TestAnOldHarnessLineIsIgnored(t *testing.T) {
+	a, err := Parse("---\nname: iris\nharness: codex\n---\nhi\n")
+	if err != nil || a.Harness != "codex" {
+		t.Errorf("loads: %+v %v", a, err)
 	}
 }

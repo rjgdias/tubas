@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -70,11 +71,12 @@ type Config struct {
 	// Notice is shown at the bottom when the window opens.
 	Notice string
 
-	// Harnesses are the ones this computer can run (claude, codex, api,
-	// ACP agents); Providers maps each model provider to its models. The
-	// agent form offers them.
-	Harnesses []string
+	// Providers maps each model provider to its models: the agent form
+	// and /model offer them.
 	Providers map[string][]string
+	// ProviderSpecs are the providers in full (addresses, key variables),
+	// for /connect.
+	ProviderSpecs map[string]engine.ProviderSpec
 }
 
 // pendingApproval is a tool call waiting for your y or n. Agents running
@@ -153,14 +155,16 @@ type Model struct {
 	review      bool
 	fileIdx     int
 	reviewWT    int
-	panes       *paneState   // terminal panes next to the chat, nil when off
-	selected    int          // index of the selected turn, -1 for none
-	scroll      int          // lines the conversation is scrolled back from the bottom
-	modelPick   *modelPicker // /model, while open
-	gatewayNote string       // why the gateway's models are missing, when they are
-	mcp         *mcpView     // /mcp: the MCP servers, open over the chat
-	deleting    string       // a conversation waiting for y to be deleted
-	menu        *ctxMenu     // the right-click menu, when open
+	panes       *paneState     // terminal panes next to the chat, nil when off
+	selected    int            // index of the selected turn, -1 for none
+	scroll      int            // lines the conversation is scrolled back from the bottom
+	modelPick   *modelPicker   // /model, while open
+	connect     *connectScreen // /connect, while open
+	firstRun    bool           // the first screen was considered
+	gatewayNote string         // why the gateway's models are missing, when they are
+	mcp         *mcpView       // /mcp: the MCP servers, open over the chat
+	deleting    string         // a conversation waiting for y to be deleted
+	menu        *ctxMenu       // the right-click menu, when open
 	// aliases are what your Claude settings make sonnet, opus and haiku
 	// mean; with a gateway that lists its models, only those show.
 	aliases     map[string]string
@@ -267,6 +271,10 @@ func (m Model) start(r request) (Model, tea.Cmd) {
 	req := engine.Request{Team: team, Target: target, Everyone: r.everyone, Question: question,
 		MaxHops: m.cfg.MaxHops, Context: conversationContext(m.past),
 		Lead: m.cfg.Lead, Routing: m.cfg.Routing, Router: m.cfg.Router}
+	if m.cfg.TeamDir != "" && m.cfg.HistoryFile != "" { // agents remember this conversation, in this window too
+		req.Conversation = strings.TrimSuffix(filepath.Base(m.cfg.HistoryFile), filepath.Ext(m.cfg.HistoryFile))
+		req.Threads = filepath.Join(m.cfg.TeamDir, ".tubas", "conversations")
+	}
 	m.changes, m.review = nil, false
 	if len(m.cfg.Repos) > 0 && m.cfg.Remote == nil {
 		m.code = repo.NewSet(m.cfg.TeamDir, fmt.Sprintf("l%d", time.Now().Unix()%100000), question, m.cfg.Repos)
@@ -327,7 +335,19 @@ func tick(run int) tea.Cmd {
 // The receiver is a value (m Model), not a pointer: Update gets a copy,
 // changes it and returns it. The old model is never modified.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.notice
 	next, cmd := m.update(msg)
+	// A notice sits where the hints are (the buttons, for the mouse): it
+	// goes after a few seconds, unless it asks something (y deletes…).
+	if nm, ok := next.(Model); ok {
+		if exp, isExp := msg.(noticeExpiredMsg); isExp && nm.notice == string(exp) && !nm.asking() {
+			nm.notice = ""
+		} else if nm.notice != "" && nm.notice != before && !nm.asking() && noticeFor > 0 {
+			text := nm.notice
+			cmd = tea.Batch(cmd, tea.Tick(noticeFor, func(time.Time) tea.Msg { return noticeExpiredMsg(text) }))
+		}
+		next = nm
+	}
 	if nm, ok := next.(Model); ok && nm.panes != nil {
 		// Whatever changed (the window, the layout, the bottom bar), each
 		// terminal learns its new size.
@@ -418,8 +438,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case conversationRenamedMsg:
 		return m.conversationRenamed(msg)
 
+	case connectCheckedMsg:
+		return m.connectChecked(msg)
+
 	case providersMsg:
 		m.providers = msg
+		if !m.firstRun {
+			m.firstRun = true
+			if m.connect == nil && m.stranded() { // nothing can reach a model: start here
+				m = m.openConnect(true)
+			}
+		}
 		m.gatewayNote = ""
 		for _, d := range msg {
 			if d.Name == "gateway" && len(d.Models) == 0 && d.ModelsErr != "" {
@@ -505,6 +534,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// The right-click menu takes the keys while it is open.
 	if m.menu != nil {
 		return m.menuKey(msg)
+	}
+	// So does /connect.
+	if m.connect != nil {
+		return m.connectKey(msg)
 	}
 	// The model picker (/model) takes every key until it closes.
 	if m.modelPick != nil {

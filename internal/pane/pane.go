@@ -1,5 +1,5 @@
-// Package pane runs programs in real terminals: a shell, claude, codex,
-// any CLI. Each pane is a pseudo-terminal (ConPTY on Windows, a pty on
+// Package pane runs programs in real terminals: your shell, a dev server,
+// any command. Each pane is a pseudo-terminal (ConPTY on Windows, a pty on
 // Linux and macOS) with a terminal emulator reading its output, so tubas
 // can draw the program's own screen inside its layout and send it keys.
 //
@@ -102,12 +102,7 @@ type Pane struct {
 	closeOnce  sync.Once     // closing a pseudo-console twice crashes Windows
 	copyDone   chan struct{} // the input copy loop ended
 
-	dets      []Detector // every agent tubas knows, to spot one started from a shell
-	det       *Detector  // the agent on screen, nil for a plain program
-	detBySig  bool       // det was found on screen, not by the command
-	lastState string
-	finished  bool   // the agent went from working to idle, and nobody looked yet
-	onExit    func() // called when the program ends on its own
+	onExit func() // called when the program ends on its own
 }
 
 // scrollback is how many lines that left the screen a pane keeps.
@@ -120,16 +115,13 @@ const quietAfterInput = 400 * time.Millisecond
 // workingFor is how long a pane stays "working" after its last output.
 const workingFor = 1500 * time.Millisecond
 
-func start(id string, spec Spec, w, h int, resolve func(string) string, env []string, dets []Detector) (*Pane, error) {
+func start(id string, spec Spec, w, h int, env []string) (*Pane, error) {
 	w, h = max(w, 10), max(h, 3)
 	name, args := spec.Command, spec.Args
 	shown := strings.TrimSpace(strings.Join(append([]string{name}, args...), " "))
 	if name == "" {
 		name, args = Shell()
 		shown = "shell"
-	}
-	if resolve != nil {
-		name = resolve(name)
 	}
 	// go-pty looks a bare name up in the pane's folder, not on the PATH.
 	if !strings.ContainsAny(name, `/\`) {
@@ -162,11 +154,6 @@ func start(id string, spec Spec, w, h int, resolve func(string) string, env []st
 		cmd:      cmd,
 		changed:  make(chan struct{}),
 		copyDone: make(chan struct{}),
-		dets:     dets,
-		det:      byCommand(dets, spec.Command),
-	}
-	if p.det != nil {
-		p.info.Agent = p.det.Name
 	}
 	p.em.SetScrollbackSize(scrollback)
 	p.em.SetCallbacks(vt.Callbacks{Title: func(t string) { p.title = t }})
@@ -271,73 +258,24 @@ func (p *Pane) Info() Info {
 	return i
 }
 
-// state reads the screen. Call with p.mu held.
+// state reads the screen: a question on it waits for you, output means
+// working, quiet means idle. Call with p.mu held.
 func (p *Pane) state(now time.Time) string {
-	s := p.readState(now)
-	if p.det != nil {
-		// Done means it finished something you asked: what it prints
-		// while starting doesn't count.
-		if p.lastState == Working && s == Idle && !p.lastInput.IsZero() {
-			p.finished = true // the agent is done: tell whoever looks
-		}
-		if s == Working || s == Blocked {
-			p.finished = false
-		}
-		p.lastState = s
-		if s == Idle && p.finished {
-			return Done
-		}
-	}
-	return s
-}
-
-func (p *Pane) readState(now time.Time) string {
 	if p.exited {
 		return Done
 	}
-	lines := p.plainLines(15)
-	// An agent started from a shell is found by what it prints; when its
-	// signature goes away, so does the agent.
-	if p.det == nil || p.detBySig {
-		if d := bySignature(p.dets, lines); d != nil {
-			p.det, p.detBySig = d, true
-		} else if p.detBySig {
-			p.det, p.detBySig = nil, false
-		}
-		p.info.Agent = ""
-		if p.det != nil {
-			p.info.Agent = p.det.Name
-		}
-	}
-	printing := now.Sub(p.lastOutput) < workingFor && p.lastOutput.Sub(p.lastInput) > quietAfterInput
-	if d := p.det; d != nil {
-		switch {
-		case matches(lines, d.Blocked):
-			return Blocked
-		case matches(lines, d.Working), printing:
-			return Working
-		}
-		return Idle
-	}
-	if asks(lines) {
+	if asks(p.plainLines(15)) {
 		return Blocked
 	}
-	if printing {
+	if now.Sub(p.lastOutput) < workingFor && p.lastOutput.Sub(p.lastInput) > quietAfterInput {
 		return Working
 	}
 	return Idle
 }
 
-// Seen says you looked at the pane: a finished agent goes back to idle.
-func (p *Pane) Seen() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.finished {
-		p.finished = false
-		p.version++
-		p.notify()
-	}
-}
+// Seen says you looked at the pane. Plain terminals keep no "done" to
+// clear, so there is nothing to do.
+func (p *Pane) Seen() {}
 
 // History is everything the pane kept: the lines that scrolled away,
 // then the screen, with colors and as plain text.
@@ -475,7 +413,6 @@ func (p *Pane) Send(keys []Key) error {
 		return errors.New("the program has exited")
 	}
 	p.lastInput = time.Now()
-	p.finished = false // you are back at it
 	p.mu.Unlock()
 	// The emulator turns keys into the bytes the program expects (it knows
 	// the program's modes, like application cursor keys and bracketed

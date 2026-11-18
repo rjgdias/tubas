@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"tubas/internal/engine"
+	"tubas/internal/tools"
 )
 
 // These types describe what the screen shows about a session: who asked
@@ -60,8 +61,9 @@ type Turn struct {
 	Plan      bool    // billed to a subscription, not per token
 	Seconds   int
 	StartedAt time.Time
-	Retry     string // the provider is failing and the harness tries again: why
-	Open      bool   // expanded by the user
+	Retry     string       // the provider is failing and tubas tries again: why
+	Todos     []tools.Todo // the agent's checklist, when it keeps one
+	Open      bool         // expanded by the user
 }
 
 // Handoff is one agent this turn called, and what it asked.
@@ -175,8 +177,15 @@ func (s Session) apply(e engine.Event) Session {
 		})
 	case engine.TextDelta:
 		s.updateTurn(e.Agent, func(t *Turn) { t.Text += e.Text; t.Retry = "" })
+	case engine.Todos:
+		s.updateTurn(e.Agent, func(t *Turn) { t.Todos = e.Items })
 	case engine.Retrying:
-		s.updateTurn(e.Agent, func(t *Turn) { t.Retry = e.String() })
+		s.updateTurn(e.Agent, func(t *Turn) {
+			t.Retry = e.String()
+			if e.Partial {
+				t.Text = "" // the attempt that broke: its text goes, the next one writes again
+			}
+		})
 	case engine.ApprovalRequested:
 		s.updateTurn(e.Agent, func(t *Turn) { t.Status = Waiting })
 		if s.Pending == nil { // otherwise it waits in the model's queue

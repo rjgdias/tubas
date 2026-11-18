@@ -308,8 +308,19 @@ func TestDeletingAConversation(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	histories := filepath.Join(dir, ".tubas", "conversations")
+	os.MkdirAll(filepath.Join(histories, first.Conversation), 0o755) // the agents' histories in it
+	os.WriteFile(filepath.Join(histories, first.Conversation, "leo.jsonl"), []byte("{}\n"), 0o600)
+	os.MkdirAll(filepath.Join(histories, other.Conversation), 0o755)
+
 	if err := c.DeleteConversation(first.Conversation); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(histories, first.Conversation)); err == nil {
+		t.Error("the agents' histories in it are deleted too")
+	}
+	if _, err := os.Stat(filepath.Join(histories, other.Conversation)); err != nil {
+		t.Error("another conversation's histories stay")
 	}
 	st, _ := c.Status()
 	if len(st.Sessions) != 1 || st.Sessions[0].ID != other.ID {

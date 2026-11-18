@@ -43,7 +43,7 @@ func (m Model) openModelPicker() Model {
 		m.notice = badStyle.Render("no agent to change")
 		return m
 	}
-	mp := &modelPicker{agent: name, models: m.modelsFor(orDefault(a.Harness, "claude"), orDefault(a.Provider, "anthropic"), a.Model),
+	mp := &modelPicker{agent: name, models: m.modelsFor(orDefault(a.Provider, "anthropic"), a.Model),
 		means: m.aliases}
 	for i, model := range mp.models {
 		if model == a.Model {
@@ -86,7 +86,7 @@ func (m Model) modelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 				if a.Name == p.agent {
 					next := m.team[(i+1)%len(m.team)]
 					p.agent = next.Name
-					p.models = m.modelsFor(orDefault(next.Harness, "claude"), orDefault(next.Provider, "anthropic"), next.Model)
+					p.models = m.modelsFor(orDefault(next.Provider, "anthropic"), next.Model)
 					p.idx, p.filter = 0, ""
 					break
 				}

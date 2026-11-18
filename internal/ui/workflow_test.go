@@ -243,7 +243,7 @@ func TestRepeatedWorkSuggestsASkill(t *testing.T) {
 
 func TestSettingsSaveToTeamYAML(t *testing.T) {
 	m := teamModel(t, engine.DemoScripts()).PressKeys("alt+7")
-	contains(t, m.Snapshot(128, 40), "CONVERSATION", "HARNESSES AND PROVIDERS", "ROUTINES")
+	contains(t, m.Snapshot(128, 40), "CONVERSATION", "PROVIDERS", "ROUTINES")
 	m = m.PressKeys("e")
 	if m.form == nil || m.form.kind != "settings" {
 		t.Fatal("e should open the settings form")

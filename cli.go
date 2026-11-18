@@ -20,7 +20,7 @@ import (
 //	tubas serve -team DIR            the server itself; tubas starts it for you
 //	tubas status -team DIR           what runs, what waits for you
 //	tubas stop -team DIR             stop the server and every session
-//	tubas session new -team DIR [-agent A] "question"
+//	tubas session new -team DIR [-agent A] [-in CONVERSATION] "question"
 //	tubas wait -team DIR ID [-until blocked,done] [-timeout 10m]
 //	tubas read -team DIR ID [-last]
 //	tubas answer -team DIR APPROVAL-ID yes|no
@@ -38,33 +38,23 @@ func buildEngine(t team.Team, name, model string, fast bool) (engine.Engine, eng
 			fake.Delay = 0
 		}
 		return fake, engine.RuleRouter{}, func() {}
-	case "claude":
-		claude, closeBroker, err := claudeEngine(t, model)
+	case "native", "claude": // claude: the old name, kept for scripts
+		eng, closeEngine, err := nativeEngine(t, model)
 		if err != nil {
 			fail("%v", err)
 		}
-		// The router is one cheap call: a small model scores the agents,
-		// on the team's provider.
-		var router engine.Router = engine.RuleRouter{} // without claude, rules pick who answers
-		if claude.Command != "" {
-			cr := engine.ClaudeRouter{Command: claude.Command, Model: "haiku", WorkDir: t.Dir, Provider: claude.Provider}
-			if spec, ok := claude.Providers[t.Provider]; ok {
-				if p, err := spec.ClaudeProvider(spec.FastModel()); err == nil {
-					cr.Provider, cr.Model = claude.Provider.With(p), p.Env["ANTHROPIC_MODEL"]
-				}
-			}
-			router = cr
-		}
-		return harnesses(t, claude, model), router, closeBroker
+		// The router is one cheap call: the team's provider's fast model
+		// scores the agents.
+		return eng, engine.NativeRouter{Engine: eng, Provider: t.Provider}, closeEngine
 	}
-	fail("unknown engine %q: use claude or fake", name)
+	fail("unknown engine %q: use native or fake", name)
 	return nil, nil, nil
 }
 
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	teamDir := fs.String("team", ".", "the team folder")
-	engineName := fs.String("engine", "claude", "claude or fake")
+	engineName := fs.String("engine", "native", "native or fake")
 	model := fs.String("model", "", "use this model for every agent")
 	fs.Parse(args)
 	t, err := team.Load(*teamDir)
@@ -186,17 +176,18 @@ func runStop(args []string) {
 
 func runSession(args []string) {
 	if len(args) == 0 || args[0] != "new" {
-		fail(`use: tubas session new -team DIR [-agent A] "question"`)
+		fail(`use: tubas session new -team DIR [-agent A] [-in CONVERSATION] "question"`)
 	}
 	fs := flag.NewFlagSet("session new", flag.ExitOnError)
 	teamDir := fs.String("team", ".", "the team folder")
 	agentName := fs.String("agent", "", "who answers (empty: the team's routing decides)")
-	fs.Parse(args[1:])
+	in := fs.String("in", "", "a follow-up in this conversation (its id: the \"conversation\" of an earlier session)")
+	fs.Parse(reorder(args[1:]))
 	q := strings.Join(fs.Args(), " ")
 	if q == "" {
 		fail("write the question")
 	}
-	info, err := client(*teamDir, true).Start(server.StartRequest{Target: strings.TrimPrefix(*agentName, "@"), Question: q})
+	info, err := client(*teamDir, true).Start(server.StartRequest{Target: strings.TrimPrefix(*agentName, "@"), Question: q, Conversation: *in})
 	if err != nil {
 		fail("%v", err)
 	}
@@ -250,7 +241,7 @@ func runRead(args []string) {
 		return
 	}
 	fmt.Printf("%s · %s · %s\n%s\n\n", info.ID, info.Title, info.State, info.Question)
-	for _, w := range events {
+	for i, w := range events {
 		switch w.Kind {
 		case "turn_started":
 			fmt.Printf("%s\n", w.Agent)
@@ -263,7 +254,16 @@ func runRead(args []string) {
 			}
 			fmt.Printf("  %s %s\n", mark, firstLine(w.Text))
 		case "approval":
-			fmt.Printf("  ◐ waits for you: %s\n", w.Call)
+			if i == len(events)-1 && info.State == "blocked" {
+				fmt.Printf("  ◐ waits for you: %s\n", w.Call)
+			} else {
+				fmt.Printf("  ◐ asked you: %s\n", w.Call)
+			}
+		case "todos":
+			marks := map[string]string{"completed": "☑", "in_progress": "◐"}
+			for _, td := range w.Todos {
+				fmt.Printf("  %s %s\n", orStr(marks[td.Status], "☐"), td.Content)
+			}
 		case "turn_finished":
 			fmt.Printf("  → %s\n", w.Summary)
 		case "failed":

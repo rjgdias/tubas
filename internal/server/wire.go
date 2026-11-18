@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"tubas/internal/engine"
+	"tubas/internal/tools"
 )
 
 // Wire is an engine event as JSON: Kind says which, and only the fields
@@ -42,6 +43,7 @@ type Wire struct {
 	Plan    bool    `json:"plan,omitempty"`
 	Limit   int     `json:"limit,omitempty"`
 	Attempt int     `json:"attempt,omitempty"`
+	Partial bool    `json:"partial,omitempty"`
 	Status  int     `json:"status,omitempty"`
 	Error   string  `json:"error,omitempty"`
 
@@ -51,6 +53,8 @@ type Wire struct {
 	Scores map[string]float64 `json:"scores,omitempty"`
 
 	Approval string `json:"approval,omitempty"` // the approval's id, to answer it
+
+	Todos []tools.Todo `json:"todos,omitempty"`
 }
 
 // Encode turns an event into its wire form.
@@ -73,9 +77,11 @@ func Encode(e engine.Event) Wire {
 			Cost: e.Cost, Millis: e.Elapsed.Milliseconds(), Passed: e.Passed, Model: e.Model, Plan: e.Plan}
 	case engine.HandedOff:
 		return Wire{Kind: "handed_off", From: e.From, To: e.To, Note: e.Note}
+	case engine.Todos:
+		return Wire{Kind: "todos", Agent: e.Agent, Todos: e.Items}
 	case engine.Retrying:
 		return Wire{Kind: "retrying", Agent: e.Agent, Attempt: e.Attempt, Limit: e.Max, Status: e.Status,
-			Reason: e.Reason, Millis: e.Delay.Milliseconds()}
+			Reason: e.Reason, Millis: e.Delay.Milliseconds(), Partial: e.Partial}
 	case engine.SessionDone:
 		return Wire{Kind: "done"}
 	case engine.HopLimitReached:
@@ -111,9 +117,11 @@ func (w Wire) Decode(reply chan<- bool) engine.Event {
 			Cost: w.Cost, Elapsed: time.Duration(w.Millis) * time.Millisecond, Passed: w.Passed, Model: w.Model, Plan: w.Plan}
 	case "handed_off":
 		return engine.HandedOff{From: w.From, To: w.To, Note: w.Note}
+	case "todos":
+		return engine.Todos{Agent: w.Agent, Items: w.Todos}
 	case "retrying":
 		return engine.Retrying{Agent: w.Agent, Attempt: w.Attempt, Max: w.Limit, Status: w.Status,
-			Reason: w.Reason, Delay: time.Duration(w.Millis) * time.Millisecond}
+			Reason: w.Reason, Delay: time.Duration(w.Millis) * time.Millisecond, Partial: w.Partial}
 	case "done":
 		return engine.SessionDone{}
 	case "hop_limit":

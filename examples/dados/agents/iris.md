@@ -2,7 +2,6 @@
 name: iris
 role: investigator
 color: orange
-harness: claude
 model: sonnet
 tools:
   data: read

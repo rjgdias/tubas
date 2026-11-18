@@ -51,8 +51,8 @@ func fakeMCP() {
 func fakeGateway(t *testing.T) GatewayFunc {
 	exe, _ := os.Executable()
 	t.Setenv("TUBAS_FAKE_MCP", "1")
-	return func(a agent.Agent, turn string, writeDirs []string, harness string) (GatewayLaunch, bool) {
-		return GatewayLaunch{Command: exe, Env: map[string]string{"TUBAS_HARNESS": harness}}, true
+	return func(a agent.Agent, turn string, writeDirs []string) (GatewayLaunch, bool) {
+		return GatewayLaunch{Command: exe, Env: map[string]string{"TUBAS_HARNESS": "native"}}, true
 	}
 }
 
@@ -79,18 +79,22 @@ func fakeProvider(t *testing.T, first, last string) (*httptest.Server, func() []
 		bodies = append(bodies, body)
 		n := len(bodies)
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
+		answer := last
 		if n == 1 {
-			fmt.Fprint(w, first)
-		} else {
-			fmt.Fprint(w, last)
+			answer = first
 		}
+		if body["stream"] == true && strings.HasSuffix(r.URL.Path, "/v1/messages") {
+			writeAnthropicStream(w, answer) // the Messages API streams
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, answer)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, func() []map[string]any { mu.Lock(); defer mu.Unlock(); return bodies }
 }
 
-func runAPI(t *testing.T, eng APIEngine, a agent.Agent) (Reply, []Event) {
+func runAPI(t *testing.T, eng NativeEngine, a agent.Agent) (Reply, []Event) {
 	t.Helper()
 	out := make(chan Event, 64)
 	reply, err := eng.RunTurn(context.Background(), TurnRequest{Agent: a, Prompt: "why did orders drop?"}, out)
@@ -109,7 +113,7 @@ func TestAPIHarnessOnAnAnthropicCompatibleProvider(t *testing.T) {
 	srv, bodies := fakeProvider(t, anthropicFirst, anthropicLast)
 	t.Setenv("DEEPSEEK_API_KEY", "ds-key")
 	providers := Providers(map[string]ProviderSpec{"deepseek": {Anthropic: srv.URL + "/anthropic", KeyEnv: "DEEPSEEK_API_KEY", Models: []string{"deepseek-v4-pro"}}})
-	eng := APIEngine{Providers: providers, WorkDir: t.TempDir(), Gateway: fakeGateway(t),
+	eng := NativeEngine{Providers: providers, WorkDir: t.TempDir(), Gateway: fakeGateway(t),
 		Prices: map[string]Price{"deepseek-v4-pro": {Input: 1, Cached: 0.1, Output: 2}}}
 	a := agent.Agent{Name: "iris", Provider: "deepseek", Model: "sonnet", Instructions: "You investigate.", Tools: map[string]string{"data": "read"}}
 	reply, events := runAPI(t, eng, a)
@@ -127,7 +131,7 @@ func TestAPIHarnessOnAnAnthropicCompatibleProvider(t *testing.T) {
 	if b[0]["_path"] != "/anthropic/v1/messages" || b[0]["_auth"] != "Bearer ds-key" || b[0]["model"] != "deepseek-v4-pro" {
 		t.Errorf("the Messages call: %v", b[0])
 	}
-	if !strings.Contains(fmt.Sprint(b[0]["system"]), "You investigate.") || !strings.Contains(fmt.Sprint(b[0]["tools"]), "harness=api") {
+	if !strings.Contains(fmt.Sprint(b[0]["system"]), "You investigate.") || !strings.Contains(fmt.Sprint(b[0]["tools"]), "harness=native") {
 		t.Errorf("the system prompt and the gateway's tools go with it: %v", b[0])
 	}
 	if !strings.Contains(fmt.Sprint(b[1]["messages"]), "1 row for") {
@@ -147,7 +151,7 @@ func TestAPIHarnessOnAnAnthropicCompatibleProvider(t *testing.T) {
 func TestAPIHarnessOnAnOpenAICompatibleProvider(t *testing.T) {
 	srv, bodies := fakeProvider(t, openAIFirst, openAILast)
 	providers := Providers(map[string]ProviderSpec{"local": {OpenAI: srv.URL + "/v1", Models: []string{"qwen3"}}})
-	eng := APIEngine{Providers: providers, DefaultProvider: "local", WorkDir: t.TempDir(), Gateway: fakeGateway(t)}
+	eng := NativeEngine{Providers: providers, DefaultProvider: "local", WorkDir: t.TempDir(), Gateway: fakeGateway(t)}
 	reply, _ := runAPI(t, eng, agent.Agent{Name: "leo", Instructions: "x", Tools: map[string]string{"data": "read"}})
 	if reply.Text != "the drop is in the south" || reply.Tokens != 1000+20+1100+30 || reply.Cached != 600 || reply.Cost != 0 {
 		t.Errorf("reply = %+v", reply)
@@ -159,4 +163,40 @@ func TestAPIHarnessOnAnOpenAICompatibleProvider(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(b[1]["messages"]), "tool_call_id:c1") {
 		t.Errorf("the tool result answers its call: %v", b[1]["messages"])
 	}
+}
+
+// writeAnthropicStream plays a whole Messages answer as the API streams
+// it: message_start, each block's start, delta and stop, message_delta.
+func writeAnthropicStream(w http.ResponseWriter, answer string) {
+	var msg struct {
+		Content []map[string]any `json:"content"`
+		Stop    string           `json:"stop_reason"`
+		Usage   map[string]any   `json:"usage"`
+	}
+	json.Unmarshal([]byte(answer), &msg)
+	w.Header().Set("Content-Type", "text/event-stream")
+	event := func(v map[string]any) {
+		data, _ := json.Marshal(v)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", v["type"], data)
+	}
+	usage := map[string]any{"input_tokens": msg.Usage["input_tokens"], "output_tokens": 0,
+		"cache_read_input_tokens": msg.Usage["cache_read_input_tokens"]}
+	event(map[string]any{"type": "message_start", "message": map[string]any{"id": "m", "type": "message", "role": "assistant",
+		"model": "fake", "content": []any{}, "stop_reason": nil, "usage": usage}})
+	for i, b := range msg.Content {
+		switch b["type"] {
+		case "text":
+			event(map[string]any{"type": "content_block_start", "index": i, "content_block": map[string]any{"type": "text", "text": ""}})
+			event(map[string]any{"type": "content_block_delta", "index": i, "delta": map[string]any{"type": "text_delta", "text": b["text"]}})
+		case "thinking": // whole, with its signature
+			event(map[string]any{"type": "content_block_start", "index": i, "content_block": b})
+		case "tool_use":
+			input, _ := json.Marshal(b["input"])
+			event(map[string]any{"type": "content_block_start", "index": i, "content_block": map[string]any{"type": "tool_use", "id": b["id"], "name": b["name"], "input": map[string]any{}}})
+			event(map[string]any{"type": "content_block_delta", "index": i, "delta": map[string]any{"type": "input_json_delta", "partial_json": string(input)}})
+		}
+		event(map[string]any{"type": "content_block_stop", "index": i})
+	}
+	event(map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": msg.Stop}, "usage": map[string]any{"output_tokens": msg.Usage["output_tokens"]}})
+	event(map[string]any{"type": "message_stop"})
 }

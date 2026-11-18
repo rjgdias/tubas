@@ -1,8 +1,8 @@
 // Package mcp is the tool gateway tubas puts between its agents and their
 // tools.
 //
-// MCP (Model Context Protocol) is how a harness like Claude Code learns
-// about tools that live outside it. Claude starts `tubas mcp` as a child
+// MCP (Model Context Protocol) is how an agent harness like tubas learns
+// about tools that live outside it. Each turn starts `tubas mcp` as a child
 // process and talks JSON-RPC 2.0 with it over stdin/stdout, one JSON
 // object per line:
 //

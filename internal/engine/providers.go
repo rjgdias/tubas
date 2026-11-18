@@ -1,29 +1,26 @@
 package engine
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"sort"
-	"time"
+	"tubas/internal/auth"
 )
 
 // ── model providers ─────────────────────────────────────────────────────
 //
-// An agent's harness is what runs its loop (claude, codex…); its provider
-// is where its model is served. DeepSeek, GLM, Kimi and Qwen serve
-// Anthropic-compatible endpoints, so the claude harness runs on them by
-// pointing Claude Code there (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN and
-// the model names). Their OpenAI-compatible endpoints are for the api
-// harness. Keys are read from environment variables, never from files.
+// An agent's provider is where its model is served: your Anthropic key or
+// company gateway (anthropic), DeepSeek, GLM, Kimi, Qwen, OpenRouter,
+// OpenAI, Gemini, Ollama, or your own server. tubas speaks Anthropic's
+// Messages API where a provider serves it, else OpenAI's. Keys come from
+// an environment variable or /connect (the system's keychain), never from
+// a team file.
 
 // ProviderSpec is where models are served.
 type ProviderSpec struct {
 	Name      string
-	Anthropic string   // Anthropic-compatible base URL: the claude harness can use it
-	OpenAI    string   // OpenAI-compatible base URL: the api harness uses it
+	Anthropic string   // Anthropic-compatible base URL: used first
+	OpenAI    string   // OpenAI-compatible base URL
 	KeyEnv    string   // the environment variable holding the key ("" = none needed)
 	Models    []string // the first is the default, the last the cheap one for routing
 	Prices    map[string]Price
@@ -50,12 +47,16 @@ var BuiltinProviders = map[string]ProviderSpec{
 	"ollama":     {OpenAI: "http://localhost:11434/v1"},
 }
 
-// Providers are the built-in providers with the team's on top.
+// Providers are the built-in providers, the ones you added with /connect
+// and the team's, each on top of the one before.
 func Providers(team map[string]ProviderSpec) map[string]ProviderSpec {
 	out := map[string]ProviderSpec{}
 	for name, p := range BuiltinProviders {
 		p.Name = name
 		out[name] = p
+	}
+	for name, c := range auth.Customs() {
+		out[name] = ProviderSpec{Name: name, OpenAI: c.OpenAI, Models: c.Models}
 	}
 	for name, p := range team {
 		p.Name = name
@@ -74,14 +75,23 @@ func ProviderNames(all map[string]ProviderSpec) []string {
 	return names
 }
 
-// Key is the provider's key from the environment, and whether one is
-// needed and missing.
+// Key is the provider's key: from its environment variable, else the one
+// you saved with /connect. missing says one is needed and there is none.
 func (p ProviderSpec) Key() (key string, missing bool) {
-	if p.KeyEnv == "" {
-		return "", false
+	if p.KeyEnv != "" {
+		if key = os.Getenv(p.KeyEnv); key != "" {
+			return key, false
+		}
 	}
-	key = os.Getenv(p.KeyEnv)
-	return key, key == ""
+	if key = auth.Get(p.Name); key != "" {
+		return key, false
+	}
+	return "", p.KeyEnv != ""
+}
+
+// NeedsKey says what to do about a missing key.
+func (p ProviderSpec) NeedsKey() error {
+	return fmt.Errorf("%s needs its key: /connect saves one, or set the environment variable %s", p.Name, p.KeyEnv)
 }
 
 // FastModel is the cheap model, for the router.
@@ -90,60 +100,4 @@ func (p ProviderSpec) FastModel() string {
 		return ""
 	}
 	return p.Models[len(p.Models)-1]
-}
-
-// ClaudeProvider points Claude Code at this provider's Anthropic-compatible
-// endpoint, with model for every model name Claude Code may ask for.
-func (p ProviderSpec) ClaudeProvider(model string) (Provider, error) {
-	if p.Anthropic == "" {
-		return Provider{}, fmt.Errorf("%s has no Anthropic-compatible endpoint: give the agent harness: api", p.Name)
-	}
-	key, missing := p.Key()
-	if missing {
-		return Provider{}, fmt.Errorf("%s needs its key: set the environment variable %s", p.Name, p.KeyEnv)
-	}
-	if model == "" && len(p.Models) > 0 {
-		model = p.Models[0]
-	}
-	env := map[string]string{
-		"ANTHROPIC_BASE_URL":   p.Anthropic,
-		"ANTHROPIC_AUTH_TOKEN": key,
-		"ANTHROPIC_API_KEY":    "", // an Anthropic key would win over the token
-		// Your Claude settings may point somewhere else: not for this agent.
-		"CLAUDE_CODE_USE_BEDROCK": "", "CLAUDE_CODE_USE_VERTEX": "", "CLAUDE_CODE_USE_FOUNDRY": "",
-	}
-	if model != "" {
-		for _, k := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
-			"ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"} {
-			env[k] = model
-		}
-	}
-	return Provider{Env: env}, nil
-}
-
-// ClaudeAuth asks claude how you are logged in. plan is true for a
-// Claude subscription (turns are billed to the plan, not per token), as
-// tucano reads it.
-func ClaudeAuth(command string) (loggedIn, plan bool, detail string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, command, "auth", "status").Output()
-	if err != nil {
-		return false, false, ""
-	}
-	var s struct {
-		LoggedIn         bool   `json:"loggedIn"`
-		AuthMethod       string `json:"authMethod"`
-		APIProvider      string `json:"apiProvider"`
-		SubscriptionType string `json:"subscriptionType"`
-	}
-	if json.Unmarshal(out, &s) != nil {
-		return false, false, ""
-	}
-	plan = s.AuthMethod == "claude.ai" && (s.APIProvider == "" || s.APIProvider == "firstParty")
-	detail = s.AuthMethod
-	if s.SubscriptionType != "" {
-		detail = "plan " + s.SubscriptionType
-	}
-	return s.LoggedIn, plan, detail
 }

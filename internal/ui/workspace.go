@@ -352,7 +352,7 @@ func (m Model) sidebarLines(w, h int) ([]string, []sideRow) {
 	if len(lines) >= h {
 		lines, rows = lines[:h-1], rows[:h-1]
 	}
-	hint := " right click: menu · b hide"
+	hint := " right click: menu · hide" // a click on this line hides the sidebar
 	lines = append(lines, faintStyle.Render(hint))
 	rows = append(rows, sideRow{ws: -1, tab: -1, action: "hide"})
 	for i := range lines {

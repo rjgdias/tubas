@@ -93,18 +93,16 @@ func listModels(ctx context.Context, url, key string, headers map[string]string)
 	return out, nil
 }
 
-// AdoptPath makes agent CLIs findable where their installers put them,
-// even when this process started without your shell's PATH (a desktop
-// launcher, a service): the usual install folders, and on Linux and
-// macOS the PATH of your login shell.
+// AdoptPath finds the programs your terminals and MCP servers need (npx,
+// your own tools) even when tubas started without your shell's PATH (a
+// desktop launcher, a service): the usual install folders, and on Linux
+// and macOS the PATH of your login shell.
 func AdoptPath() {
 	home, _ := os.UserHomeDir()
-	dirs := []string{filepath.Join(home, ".local", "bin"), filepath.Join(home, ".opencode", "bin"),
-		filepath.Join(home, ".bun", "bin"), filepath.Join(home, ".grok", "bin"), filepath.Join(home, "go", "bin")}
+	dirs := []string{filepath.Join(home, ".local", "bin"), filepath.Join(home, "go", "bin")}
 	if runtime.GOOS == "windows" {
-		dirs = append(dirs, filepath.Join(os.Getenv("APPDATA"), "npm"), filepath.Join(os.Getenv("LOCALAPPDATA"), "cursor-agent"),
-			filepath.Join(os.Getenv("LOCALAPPDATA"), "agy", "bin"))
-	} else if _, err := exec.LookPath("claude"); err != nil {
+		dirs = append(dirs, filepath.Join(os.Getenv("APPDATA"), "npm"))
+	} else if _, err := exec.LookPath("npx"); err != nil {
 		if shellPath := loginShellPath(); shellPath != "" {
 			dirs = append(dirs, filepath.SplitList(shellPath)...)
 		}

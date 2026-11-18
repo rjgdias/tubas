@@ -11,9 +11,6 @@ package engine
 
 import (
 	"context"
-	"fmt"
-	"sort"
-	"strings"
 	"time"
 
 	"tubas/internal/agent"
@@ -22,9 +19,9 @@ import (
 // Engine runs one turn of one agent: it gets the agent and a prompt,
 // reports what the agent does as events on out, and returns the reply.
 //
-// FakeEngine plays a script; ClaudeEngine runs `claude -p`. The rest of
-// tubas only sees this interface, so swapping one for the other changes
-// nothing else.
+// FakeEngine plays a script; NativeEngine runs tubas's own loop against a
+// provider. The rest of tubas only sees this interface, so swapping one
+// for the other changes nothing else.
 type Engine interface {
 	RunTurn(ctx context.Context, req TurnRequest, out chan<- Event) (Reply, error)
 }
@@ -40,6 +37,15 @@ type TurnRequest struct {
 	// where this session writes in each (its worktree, made on first use).
 	Repos     map[string]string
 	Workspace func(repo string) (string, error)
+
+	// History: the conversation the turn belongs to, where its agents'
+	// histories are kept (Threads), and its earlier questions (Past).
+	// Followup is Prompt without the earlier questions, for an agent that
+	// already has them in its history.
+	Conversation string
+	Threads      string
+	Past         []Exchange
+	Followup     string
 }
 
 // TurnKind says why an agent is running.
@@ -62,51 +68,6 @@ type Reply struct {
 	Cost   float64 // what the turn cost, in US$, when the engine knows
 	Model  string  // the model that answered
 	Plan   bool    // billed to a subscription (Claude's or ChatGPT's), not per token
-}
-
-// ByHarness picks the engine from the agent's harness field, so one team
-// can mix agents run by different harnesses.
-type ByHarness map[string]Engine
-
-func (b ByHarness) RunTurn(ctx context.Context, req TurnRequest, out chan<- Event) (Reply, error) {
-	eng, ok := b[req.Agent.Harness]
-	if !ok {
-		return Reply{}, fmt.Errorf("%s runs on %s, which is not installed on this computer (available: %s)",
-			req.Agent.Name, req.Agent.Harness, strings.Join(b.Names(), ", "))
-	}
-	return eng.RunTurn(ctx, req, out)
-}
-
-// Names are the harnesses available, sorted, claude first.
-func (b ByHarness) Names() []string {
-	var names []string
-	for name := range b {
-		names = append(names, name)
-	}
-	sort.Slice(names, func(i, j int) bool {
-		if names[i] == "claude" || names[j] == "claude" {
-			return names[i] == "claude"
-		}
-		return names[i] < names[j]
-	})
-	return names
-}
-
-// Name describes the engines, for the header: claude's own label (with
-// its provider), plus the other harnesses available.
-func (b ByHarness) Name() string {
-	var parts []string
-	for _, name := range b.Names() {
-		if name == "api" && len(b) > 1 {
-			continue // always there: the header names what is installed
-		}
-		label := name
-		if named, ok := b[name].(interface{ Name() string }); ok && name == "claude" {
-			label = named.Name()
-		}
-		parts = append(parts, label)
-	}
-	return strings.Join(parts, " · ")
 }
 
 // send delivers an event, unless the context is cancelled first.

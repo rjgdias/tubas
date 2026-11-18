@@ -9,6 +9,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+
+	"tubas/internal/tools"
 )
 
 const minWidth, minHeight = 60, 18
@@ -61,6 +63,8 @@ func (m Model) screen(cw int) []string {
 
 	var body []string
 	switch {
+	case m.connect != nil:
+		body = m.viewConnect(cw, bodyH)
 	case m.modelPick != nil:
 		body = m.viewModelPicker(cw, bodyH)
 	case m.mcp != nil:
@@ -128,7 +132,7 @@ func (m Model) viewHeader(cw int) string {
 	return spread(left, right, cw)
 }
 
-// engineName is "claude" or "fake", when the engine says.
+// engineName is "native · …" or "fake", when the engine says.
 func (m Model) engineName() string {
 	if named, ok := m.eng.(interface{ Name() string }); ok {
 		return named.Name()
@@ -243,9 +247,6 @@ func (m Model) soloModel() string {
 	model := orDefault(a.Model, "sonnet")
 	if a.Provider != "" && a.Provider != "anthropic" {
 		model += " · " + a.Provider
-	}
-	if a.Harness != "" && a.Harness != "claude" {
-		model += " · " + a.Harness
 	}
 	return model
 }
@@ -512,6 +513,9 @@ func (m Model) turnBody(t Turn, w int, open bool) []string {
 			lines = append(lines, fit(stepLine(st), w))
 		}
 	}
+	if len(t.Todos) > 0 && (open || t.Status == Live || t.Status == Waiting) {
+		lines = append(lines, todoLines(t.Todos, w)...)
+	}
 	switch {
 	case t.Summary != "":
 		lines = append(lines, renderMarkdown(t.Summary, w)...)
@@ -537,6 +541,22 @@ func (m Model) turnBody(t Turn, w int, open bool) []string {
 	for _, h := range t.Handoffs {
 		lines = append(lines, fit(dimStyle.Render("→ ")+m.agentStyle(h.To).Render("@"+h.To)+
 			dimStyle.Render(" "+h.Note), w))
+	}
+	return lines
+}
+
+// todoLines draws the agent's checklist: done, doing, to do.
+func todoLines(todos []tools.Todo, w int) []string {
+	var lines []string
+	for _, td := range todos {
+		switch td.Status {
+		case "completed":
+			lines = append(lines, fit(dimStyle.Render("  ☑ "+td.Content), w))
+		case "in_progress":
+			lines = append(lines, fit(hiStyle.Render("  ◐ "+td.Content), w))
+		default:
+			lines = append(lines, fit(textStyle.Render("  ☐ "+td.Content), w))
+		}
 	}
 	return lines
 }
@@ -748,11 +768,20 @@ func (m Model) viewInput(cw int) string {
 	default:
 		left = prompt + cursor + dimStyle.Render(" ask anything · @agent picks who answers")
 	}
-	right := m.notice
-	if right == "" {
-		right = dimStyle.Render(m.hint())
+	// The hints stay on the right: they are buttons. A notice goes on the
+	// left, in place of the grey text, while nothing is typed.
+	right := dimStyle.Render(m.hint())
+	if m.notice != "" {
+		switch {
+		case len(m.input) > 0:
+			right = m.notice
+		case m.running && m.session.Pending == nil:
+			left = dimStyle.Render("› ") + m.notice
+		default:
+			left = prompt + cursor + " " + m.notice
+		}
 	}
-	return spread(left, right, cw)
+	return spread(fit(left, cw-lipgloss.Width(right)-2), right, cw)
 }
 
 // hint shows the keys that matter right now.
@@ -891,6 +920,7 @@ func (m Model) withHelp(base []string, cw int) []string {
 		{"", "right click", "a conversation, tab or workspace: rename, delete"},
 		{"", "/copy /export", "copy the answer · save as Markdown"},
 		{"", "/model /usage", "change the model · what it cost"},
+		{"", "/connect", "connect a provider: paste its key"},
 		{"", "/mcp /skills", "tools · skills (/name runs a skill)"},
 		{"", "/doctor", "check how agents reach a model"},
 		{},

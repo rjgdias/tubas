@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"tubas/internal/agent"
+	"tubas/internal/engine"
 	"tubas/internal/routine"
 	"tubas/internal/team"
 )
@@ -95,7 +96,7 @@ func escalatingTeam(t *testing.T, on ...string) team.Team {
 }
 
 func fakeSenior(g *Gateway, calls *atomic.Int32) {
-	g.senior.run = func(_ context.Context, model, prompt string) (string, float64, error) {
+	g.senior.Run = func(_ context.Context, model, prompt string) (string, float64, error) {
 		calls.Add(1)
 		return "try describe_table first", 0.01, nil
 	}
@@ -145,8 +146,8 @@ func TestEscalationDailyLimit(t *testing.T) {
 	if calls.Load() != 2 || !strings.Contains(third, "daily limit") {
 		t.Errorf("per_day 2: asked %d times, third answer %q", calls.Load(), third)
 	}
-	if n := EscalationsToday(g.senior.teamDir, "writer"); n != 2 {
+	if n := engine.EscalationsToday(g.senior.TeamDir, "writer"); n != 2 {
 		t.Errorf("EscalationsToday = %d", n)
 	}
-	os.RemoveAll(filepath.Join(g.senior.teamDir, ".tubas"))
+	os.RemoveAll(filepath.Join(g.senior.TeamDir, ".tubas"))
 }

@@ -8,35 +8,40 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"time"
+
+	"tubas/internal/agent"
+	"tubas/internal/auth"
+	"tubas/internal/llm"
+	"tubas/internal/thread"
+	"tubas/internal/tools"
 )
 
-// ── api: tubas's own agent loop ─────────────────────────────────────────
+// ── the native harness: tubas's own agent loop ──────────────────────────
 //
-// For agents with only an API key or a local model (no agent CLI), tubas
-// runs the loop itself, as agentes.chat's "model brain" does: send the
-// conversation and the tools, run the tools the model calls, send the
-// results back, until it answers. Two wire formats cover the providers:
-// Anthropic's Messages API (Anthropic, and the Anthropic-compatible
-// DeepSeek, GLM, Kimi, Qwen) and OpenAI's chat completions (OpenRouter,
-// Ollama, LM Studio, any OpenAI-compatible base URL).
+// tubas runs the loop itself: send the conversation and the tools, run
+// the tools the model calls, send the results back, until it answers.
+// internal/llm speaks the two wire formats (Anthropic's Messages API and
+// OpenAI's chat completions), streaming, retrying and saying so.
 //
-// The tools are the same tubas gateway every harness gets, started as an
-// MCP server for the turn, so access and approvals don't change.
+// Its own tools (files, search, the shell, the checklist, the web) run
+// in the turn (internal/tools); the team's connectors come through the
+// tubas gateway, an MCP server started for the turn.
 
 // Price is what a model costs, in US$ per million tokens.
 type Price struct {
 	Input, Cached, Output float64
 }
 
-// APIEngine runs agents with harness: api.
-type APIEngine struct {
+// NativeEngine runs every agent: tubas is its own harness.
+type NativeEngine struct {
 	// Setup is your Claude setup (FindProvider): the provider "anthropic"
 	// goes where it points, a company gateway included, with its token,
 	// apiKeyHelper, headers and model names.
@@ -47,27 +52,29 @@ type APIEngine struct {
 	Gateway         GatewayFunc
 	Approvals       *Broker
 	Prices          map[string]Price // by model; a model without one shows tokens, no cost
+	AllowCommands   []string         // command prefixes that run without your yes (team.yaml allow_commands)
 	HTTP            *http.Client
-	MaxSteps        int // model calls per turn (0 = 60, as tucano)
+	MaxSteps        int    // model calls per turn (0 = 60, as tucano)
+	Model           string // every agent answers with this model (tubas -model)
 }
 
-func (e APIEngine) Name() string {
+func (e NativeEngine) Name() string {
 	if label := e.Setup.Label(); label != "" {
-		return "api · " + label
+		return "native · " + label
 	}
-	return "api"
+	return "native"
 }
 
-// setupSpec is the provider "anthropic" on the api harness: where your
+// setupSpec is the provider "anthropic": where your
 // Claude settings point (a gateway), else Anthropic's API with a key.
-func (e APIEngine) setupSpec() (ProviderSpec, string, map[string]string, error) {
+func (e NativeEngine) setupSpec() (ProviderSpec, string, map[string]string, error) {
 	setup, err := e.Setup.Resolved()
 	if err != nil {
 		return ProviderSpec{}, "", nil, err
 	}
 	for _, v := range []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"} {
 		if truthy(setup.Get(v)) {
-			return ProviderSpec{}, "", nil, errors.New("your Claude setup uses " + e.Setup.Label() + ": that needs the claude harness (Claude Code installed)")
+			return ProviderSpec{}, "", nil, errors.New("your Claude settings use " + e.Setup.Label() + ", which tubas doesn't reach: /connect a provider (an Anthropic key, or another)")
 		}
 	}
 	spec := anthropicAPI
@@ -78,15 +85,18 @@ func (e APIEngine) setupSpec() (ProviderSpec, string, map[string]string, error) 
 	if key == "" {
 		key = setup.Get("ANTHROPIC_API_KEY")
 	}
+	if key == "" && spec.Anthropic == anthropicAPI.Anthropic {
+		key = auth.Get(Anthropic) // the key you saved with /connect
+	}
 	if key == "" {
-		return ProviderSpec{}, "", nil, errors.New("no key for your Claude setup: set ANTHROPIC_API_KEY, or ANTHROPIC_AUTH_TOKEN or an apiKeyHelper in your Claude settings")
+		return ProviderSpec{}, "", nil, errors.New("no key for Anthropic: /connect saves one (or set ANTHROPIC_API_KEY, or a token or apiKeyHelper in your Claude settings)")
 	}
 	return spec, key, setup.Headers(), nil
 }
 
 // setupModel maps claude's short names to the ones your setup asks for
 // (a gateway often names models its own way), as Claude Code does.
-func (e APIEngine) setupModel(model string) string {
+func (e NativeEngine) setupModel(model string) string {
 	if model == "" {
 		model = "sonnet"
 	}
@@ -102,15 +112,15 @@ func (e APIEngine) setupModel(model string) string {
 	return model
 }
 
-// anthropicAPI is the provider "anthropic" for the api harness: Anthropic's
+// anthropicAPI is the provider "anthropic": Anthropic's
 // own API, with an API key (a Claude plan works only through claude).
 var anthropicAPI = ProviderSpec{Name: Anthropic, Anthropic: "https://api.anthropic.com", KeyEnv: "ANTHROPIC_API_KEY",
 	Models: []string{"claude-sonnet-5-5", "claude-haiku-5-5"}}
 
 // claudeAliases are the ids behind claude's short model names.
-var claudeAliases = map[string]string{"haiku": "claude-haiku-5-5", "sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
+var claudeAliases = llm.Aliases
 
-// apiTool is a tool as the model sees it.
+// apiTool is a tool as the gateway lists it.
 type apiTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
@@ -123,155 +133,317 @@ type apiCall struct {
 	Args     json.RawMessage
 }
 
-// apiStep is one model answer.
-type apiStep struct {
-	Text                  string
-	Calls                 []apiCall
-	Input, Cached, Output int
-}
-
-// apiChat is one wire format: it keeps the conversation and asks for the
-// next step.
-type apiChat interface {
-	next(ctx context.Context) (apiStep, error)
-	results(calls []apiCall, outputs []string, failed []bool)
-}
-
-func (e APIEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- Event) (Reply, error) {
-	a := req.Agent
+// clientFor is the wire format, model and provider an agent runs on.
+// like is the Claude model a gateway's own name stands for (sonnet →
+// acme-claude-sonnet), so the request asks what that model accepts.
+func (e NativeEngine) clientFor(a agent.Agent) (client llm.Client, model, like string, setup bool, err error) {
 	name := a.Provider
 	if name == "" {
 		name = e.DefaultProvider
 	}
-	var spec ProviderSpec
-	var key, model string
-	headers := map[string]string{}
 	if name == "" || name == Anthropic {
-		var err error
-		if spec, key, headers, err = e.setupSpec(); err != nil {
-			return Reply{}, fmt.Errorf("%s: %w", a.Name, err)
+		spec, key, headers, err := e.setupSpec()
+		if err != nil {
+			return nil, "", "", true, err
 		}
 		model = e.setupModel(a.Model)
-	} else {
-		var ok bool
-		if spec, ok = e.Providers[name]; !ok {
-			return Reply{}, fmt.Errorf("%s: no provider named %q", a.Name, name)
+		like = a.Model
+		if like == "" {
+			like = "sonnet"
 		}
-		var missing bool
-		if key, missing = spec.Key(); missing {
-			return Reply{}, fmt.Errorf("%s: %s needs its key: set the environment variable %s", a.Name, spec.Name, spec.KeyEnv)
+		if _, alias := llm.Aliases[like]; !alias {
+			like = ""
 		}
-		model = a.Model
-		if isClaudeModel(model) {
-			model = ""
-			if len(spec.Models) > 0 {
-				model = spec.Models[0]
-			}
-		}
+		return &llm.Anthropic{Base: spec.Anthropic, Key: key, Official: spec.Anthropic == anthropicAPI.Anthropic,
+			Headers: headers, Like: like, HTTP: e.HTTP}, model, like, true, nil
+	}
+	spec, ok := Spec(e.Providers, name)
+	if !ok {
+		return nil, "", "", false, fmt.Errorf("no provider named %q: /connect adds one", name)
+	}
+	key, missing := spec.Key()
+	if missing {
+		return nil, "", "", false, spec.NeedsKey()
+	}
+	model = a.Model
+	if (model == "" || llm.IsClaude(model)) && len(spec.Models) > 0 {
+		model = spec.Models[0] // no model, or a Claude name on another provider: its own first model
+	} else if llm.IsClaude(model) {
+		model = ""
 	}
 	if model == "" {
-		return Reply{}, fmt.Errorf("%s: say which model to use (model: in the agent's file)", a.Name)
+		return nil, "", "", false, errors.New("say which model to use (model: in the agent's file)")
 	}
+	if spec.Anthropic != "" {
+		return &llm.Anthropic{Base: spec.Anthropic, Key: key, HTTP: e.HTTP}, model, "", false, nil
+	}
+	return &llm.OpenAI{Base: spec.OpenAI, Key: key, HTTP: e.HTTP}, model, "", false, nil
+}
 
+// maxContinues is how many times a turn cut by max_tokens carries on.
+const maxContinues = 3
+
+// textEvery is how often streamed text reaches the screen: in batches,
+// since the server keeps every event.
+const textEvery = 50 * time.Millisecond
+
+func (e NativeEngine) RunTurn(ctx context.Context, req TurnRequest, out chan<- Event) (Reply, error) {
+	a := req.Agent
+	if e.Model != "" {
+		a.Model = e.Model
+	}
+	client, model, like, setup, err := e.clientFor(a)
+	if err != nil {
+		return Reply{}, fmt.Errorf("%s: %w", a.Name, err)
+	}
 	code, err := codePlaces(req)
 	if err != nil {
 		return Reply{}, err
 	}
 	turn := newTurnID()
-	var tools []apiTool
+	// The agent's own tools run here, in this turn: files, search, the
+	// shell, the checklist, the web.
+	box := &tools.Box{Read: code.all, Write: code.write, Allow: e.AllowCommands,
+		Todos: func(items []tools.Todo) { send(ctx, out, Todos{Agent: a.Name, Items: items}) }}
+	if e.Approvals != nil {
+		box.Ask = func(ctx context.Context, call, detail string) (bool, string, error) {
+			return e.Approvals.Ask(ctx, turn, a.Name, call, detail)
+		}
+	}
+	if req.Conversation != "" { // a site you allowed stays allowed for the conversation
+		sites, _ := siteApprovals.LoadOrStore(req.Threads+"|"+req.Conversation, &sync.Map{})
+		box.Domains = sites.(*sync.Map)
+	}
+	senior := NewSenior(a, e.WorkDir, e)
+	if senior.Has("before_write") { // a stronger model looks at each command before you do
+		box.Review = func(ctx context.Context, prompt string) string { return senior.Ask(prompt) }
+	}
+	var gwTools []apiTool
 	var gw *rpcConn
 	if e.Gateway != nil {
-		if launch, ok := e.Gateway(a, turn, code.write, "api"); ok {
+		if launch, ok := e.Gateway(a, turn, code.write); ok {
 			launch.Env["TUBAS_READ_DIRS"] = strings.Join(code.all, string(os.PathListSeparator))
 			stop, conn, list, err := startGateway(ctx, launch, e.WorkDir)
 			if err != nil {
 				return Reply{}, fmt.Errorf("%s: starting the tools: %w", a.Name, err)
 			}
 			defer stop()
-			gw, tools = conn, list
+			gw, gwTools = conn, list
 		}
 	}
 	// The APIs accept tool names of letters, digits, _ and - (64 at most):
 	// the model sees a clean name, the gateway gets the real one.
 	real := map[string]string{}
-	for i, t := range tools {
+	var offered []llm.Tool
+	for _, t := range box.Tools() {
+		offered = append(offered, llm.Tool{Name: t.Name, Description: t.Description, Schema: t.Schema})
+	}
+	for _, t := range gwTools {
 		clean := functionName(t.Name)
 		real[clean] = t.Name
-		tools[i].Name = clean
+		offered = append(offered, llm.Tool{Name: clean, Description: t.Description, Schema: orEmpty(t.Schema)})
 	}
 	if e.Approvals != nil {
 		defer e.Approvals.Attach(ctx, turn, out)()
 	}
 
-	client := e.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Minute}
+	caps := llm.Lookup(model, like)
+	price := caps.Price
+	if !caps.Known {
+		if p, ok := e.Prices[model]; ok { // a team's own prices
+			price = llm.Price{Input: p.Input, Output: p.Output, CacheRead: p.Cached, CacheWrite: p.Input * 1.25}
+		}
 	}
-	system := SystemPrompt(a, req.Team) + apiCodePrompt(code)
-	var chat apiChat
-	if spec.Anthropic != "" {
-		chat = &messagesChat{http: client, base: spec.Anthropic, key: key, headers: headers,
-			official: spec.Anthropic == anthropicAPI.Anthropic, model: model,
-			system: system, tools: tools, prompt: req.Prompt, effort: turnEffort(a.Effort, req.Kind)}
-	} else {
-		chat = &openAIChat{http: client, base: spec.OpenAI, key: key, model: model, system: system, tools: tools, prompt: req.Prompt}
+	request := llm.Request{Model: model, System: SystemPrompt(a, req.Team) + box.Prompt(code.names), Tools: offered,
+		Effort: turnEffort(a.Effort, req.Kind)}
+
+	// The agent's history in this conversation: a follow-up continues it,
+	// told only what happened since it last spoke.
+	hist, closeHistory, err := openHistory(req, thread.Frame(model, request.System, offered))
+	if err != nil {
+		return Reply{}, fmt.Errorf("%s: its history: %w", a.Name, err)
+	}
+	defer closeHistory()
+	first := req.Prompt
+	if hist.continues() && req.Followup != "" {
+		first = req.Followup
+		if news := pastDigest(req.Past, a.Name, hist.lastAt()); news != "" {
+			first = news + "\n" + first
+		}
+	}
+
+	// Streamed text goes to the screen in batches; a new step starts on a
+	// new paragraph; an attempt that broke has its text taken back.
+	var buf strings.Builder
+	shown, before, restore := "", "", ""
+	stepStarted := false
+	lastFlush := time.Now()
+	flush := func() {
+		if buf.Len() > 0 {
+			shown += buf.String()
+			send(ctx, out, TextDelta{a.Name, buf.String()})
+			buf.Reset()
+			lastFlush = time.Now()
+		}
+	}
+	events := llm.Events{
+		Text: func(s string) {
+			if restore != "" { // the failed attempt's text was dropped: put back what came before it
+				buf.WriteString(restore)
+				restore = ""
+			}
+			if !stepStarted {
+				if shown != "" || buf.Len() > 0 {
+					buf.WriteString("\n\n")
+				}
+				stepStarted = true
+			}
+			buf.WriteString(s)
+			if time.Since(lastFlush) >= textEvery {
+				flush()
+			}
+		},
+		Retry: func(r llm.Retry) {
+			if r.Partial {
+				buf.Reset()
+				shown, restore, stepStarted = before, before, false
+			}
+			send(ctx, out, Retrying{Agent: a.Name, Attempt: r.Attempt, Max: r.Max, Status: r.Status,
+				Reason: r.Reason, Delay: r.Delay, Partial: r.Partial})
+		},
 	}
 
 	var reply Reply
 	reply.Model = model
+	limit := compactAt(a.TokenLimit, caps)
+	// compact summarizes the conversation so far; the next requests start
+	// from the summary. Only between tool rounds, never inside one.
+	compact := func() {
+		send(ctx, out, ToolCalled{a.Name, "compact(the conversation is long)"})
+		ask := request
+		ask.Messages = append(hist.messages(), llm.UserText(thread.CompactPrompt))
+		resp, err := client.Stream(ctx, ask, llm.Events{Retry: events.Retry})
+		summary := strings.TrimSpace(resp.Message.Text())
+		if err == nil && summary == "" {
+			err = errors.New("the model wrote no summary")
+		}
+		if err == nil {
+			err = hist.compact(summary)
+		}
+		if err != nil {
+			send(ctx, out, ToolResult{Agent: a.Name, Failed: true, Text: "not compacted: " + firstLine(err.Error())})
+			return
+		}
+		reply.Tokens += resp.Usage.Input + resp.Usage.Output
+		reply.Cached += resp.Usage.CacheRead
+		reply.Cost += price.Cost(resp.Usage)
+		send(ctx, out, ToolResult{Agent: a.Name, Text: fmt.Sprintf("%dK tokens summarized in %d words", resp.Usage.Input/1000, len(strings.Fields(summary)))})
+	}
+	if hist.lastInput() > limit {
+		compact()
+	}
+	if err := hist.add(llm.UserText(first)); err != nil {
+		return reply, fmt.Errorf("%s: writing its history: %w", a.Name, err)
+	}
+	request.Messages = hist.messages()
 	steps := e.MaxSteps
 	if steps <= 0 {
 		steps = 60
 	}
-	price, priced := e.Prices[model]
+	continues, refreshed := 0, false
+	answer := "" // the final answer, across max_tokens continuations
 	for i := 0; ; i++ {
 		if i == steps {
 			return reply, fmt.Errorf("%s: still calling tools after %d steps", a.Name, steps)
 		}
-		step, err := chat.next(ctx)
+		before = shown
+		if continues == 0 {
+			stepStarted = false
+		}
+		resp, err := client.Stream(ctx, request, events)
+		flush()
+		if err != nil && llm.StatusOf(err) == 401 && setup && e.Setup.KeyHelper != "" && !refreshed {
+			// The token from your apiKeyHelper expired: a fresh one, once.
+			refreshed = true
+			forgetHelperKey()
+			if fresh, m, l, s, ferr := e.clientFor(a); ferr == nil {
+				client, model, like, setup = fresh, m, l, s
+				i--
+				continue
+			}
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return reply, ctx.Err()
 			}
-			return reply, fmt.Errorf("%s: %w", a.Name, err)
+			return reply, fmt.Errorf("%s: %w", a.Name, explainProvider(err))
 		}
-		reply.Tokens += step.Input + step.Output
-		reply.Cached += step.Cached
-		if priced {
-			reply.Cost += (float64(step.Input-step.Cached)*price.Input + float64(step.Cached)*price.Cached + float64(step.Output)*price.Output) / 1e6
+		reply.Tokens += resp.Usage.Input + resp.Usage.Output
+		reply.Cached += resp.Usage.CacheRead
+		reply.Cost += price.Cost(resp.Usage)
+		text := resp.Message.Text()
+		if resp.Stop == llm.StopMaxTokens {
+			// Cut short: keep what was written, not a tool call cut in half.
+			resp.Message.Blocks = slices.DeleteFunc(slices.Clone(resp.Message.Blocks), func(b llm.Block) bool { return b.Type == "tool_use" })
 		}
-		if err := overLimit(step.Input, a.TokenLimit); err != nil {
-			return reply, err
+		if len(resp.Message.Blocks) > 0 {
+			if err := hist.addAnswer(resp.Message, resp.Usage.Input); err != nil {
+				return reply, fmt.Errorf("%s: writing its history: %w", a.Name, err)
+			}
 		}
-		if step.Text != "" {
-			send(ctx, out, TextDelta{a.Name, step.Text})
+		switch resp.Stop {
+		case llm.StopMaxTokens:
+			// Carry on, a few times, in the same paragraph.
+			answer += text
+			if continues < maxContinues && len(resp.Message.Blocks) > 0 {
+				continues++
+				if err := hist.add(llm.UserText("Continue exactly where you stopped.")); err != nil {
+					return reply, err
+				}
+				request.Messages = hist.messages()
+				continue
+			}
+			reply.Text = strings.TrimSpace(answer + "\n\n(cut: the answer was longer than the model may write at once)")
+			return reply, nil
+		case llm.StopRefusal:
+			note := "the model declined to answer this"
+			if resp.Detail != "" {
+				note += ": " + resp.Detail
+			}
+			reply.Text = strings.TrimSpace(answer + text + "\n\n(" + note + ")")
+			return reply, nil
+		case llm.StopPause:
+			request.Messages = hist.messages() // the server's tools go on
+			continue
 		}
-		if len(step.Calls) == 0 {
-			reply.Text = step.Text
+		continues = 0
+		calls := resp.Message.Calls()
+		if len(calls) == 0 {
+			reply.Text = strings.TrimSpace(answer + text)
 			return reply, nil
 		}
-		outputs, failed := make([]string, len(step.Calls)), make([]bool, len(step.Calls))
-		for j, call := range step.Calls {
-			if name, ok := real[call.Name]; ok {
-				call.Name = name
-			}
-			send(ctx, out, ToolCalled{a.Name, describeCall(call.Name, call.Args)})
-			if gw == nil {
-				outputs[j], failed[j] = "no tools are available", true
-			} else {
-				outputs[j], failed[j] = callTool(ctx, gw, call)
-			}
-			if r := []rune(outputs[j]); len(r) > maxToolOutput {
-				outputs[j] = string(r[:maxToolOutput]) + "\n… (cut: the result is longer)"
-			}
-			ev := ToolResult{Agent: a.Name, Text: firstLine(outputs[j]), Failed: failed[j]}
-			if k := strings.Index(outputs[j], "\n↑ "); k >= 0 {
-				ev.Text += "\n" + strings.TrimSpace(outputs[j][k+1:])
-			}
-			send(ctx, out, ev)
+		answer = ""
+		if err := hist.add(e.runCalls(ctx, a.Name, calls, box, gw, real, senior, out)); err != nil {
+			return reply, fmt.Errorf("%s: writing its history: %w", a.Name, err)
 		}
-		chat.results(step.Calls, outputs, failed)
+		if resp.Usage.Input > limit { // the tool round is whole: a good place to compact
+			compact()
+		}
+		request.Messages = hist.messages()
 	}
+}
+
+// explainProvider turns a provider's error into what to do.
+func explainProvider(err error) error {
+	switch llm.StatusOf(err) {
+	case 401, 403:
+		return fmt.Errorf("the provider refused the key (%d): run /connect, or check your token or apiKeyHelper · %w", llm.StatusOf(err), err)
+	case 404:
+		return fmt.Errorf("this model or URL isn't there (404): /model picks one your provider serves · %w", err)
+	case 429:
+		return fmt.Errorf("the provider is limiting use right now (429): wait a little and ask again · %w", err)
+	}
+	return err
 }
 
 // maxToolOutput is how much of a tool's result goes back to the model.
@@ -362,201 +534,6 @@ func callTool(ctx context.Context, gw *rpcConn, call apiCall) (string, bool) {
 		parts = append(parts, c.Text)
 	}
 	return strings.Join(parts, "\n"), r.IsError
-}
-
-// apiCodePrompt tells an api agent where it works on code.
-func apiCodePrompt(code codeAccess) string {
-	if len(code.all) == 0 {
-		return ""
-	}
-	p := strings.Replace(code.prompt, "(Read, Grep, Glob, Edit, Write and a shell)",
-		"(code__read_file, code__list_files, code__search, code__write_file in your worktree, and code__run_command, which a human approves)", 1)
-	return strings.Replace(p, "(Read, Grep, Glob)", "(code__read_file, code__list_files, code__search)", 1)
-}
-
-func postJSON(ctx context.Context, client *http.Client, url string, headers map[string]string, body any, out any) error {
-	data, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 20<<20))
-	if resp.StatusCode >= 300 {
-		return friendlyHTTP(resp.StatusCode, firstLine(string(raw)))
-	}
-	return json.Unmarshal(raw, out)
-}
-
-// ── Anthropic Messages ──────────────────────────────────────────────────
-
-type messagesChat struct {
-	http             *http.Client
-	base, key, model string
-	official         bool
-	headers          map[string]string // ANTHROPIC_CUSTOM_HEADERS
-	system, prompt   string
-	effort           string
-	tools            []apiTool
-	messages         []map[string]any
-}
-
-func (c *messagesChat) next(ctx context.Context) (apiStep, error) {
-	if c.messages == nil {
-		c.messages = []map[string]any{{"role": "user", "content": c.prompt}}
-	}
-	tools := make([]map[string]any, len(c.tools))
-	for i, t := range c.tools {
-		tools[i] = map[string]any{"name": t.Name, "description": t.Description, "input_schema": json.RawMessage(orEmpty(t.Schema))}
-	}
-	body := map[string]any{"model": c.model, "max_tokens": 8192, "messages": c.messages,
-		// The system prompt and the tools never change in a session: cached.
-		"system": []map[string]any{{"type": "text", "text": c.system, "cache_control": map[string]string{"type": "ephemeral"}}}}
-	if len(tools) > 0 {
-		body["tools"] = tools
-	}
-	headers := map[string]string{"anthropic-version": "2023-06-01"}
-	for k, v := range c.headers {
-		headers[k] = v
-	}
-	if c.official {
-		headers["x-api-key"] = c.key
-	} else {
-		headers["Authorization"] = "Bearer " + c.key
-		headers["x-api-key"] = c.key
-	}
-	var resp struct {
-		Content []struct {
-			Type  string          `json:"type"`
-			Text  string          `json:"text"`
-			ID    string          `json:"id"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
-		} `json:"content"`
-		Usage struct {
-			Input       int `json:"input_tokens"`
-			Output      int `json:"output_tokens"`
-			CacheRead   int `json:"cache_read_input_tokens"`
-			CacheCreate int `json:"cache_creation_input_tokens"`
-		} `json:"usage"`
-	}
-	if err := postJSON(ctx, c.http, strings.TrimRight(c.base, "/")+"/v1/messages", headers, body, &resp); err != nil {
-		return apiStep{}, err
-	}
-	var step apiStep
-	var content []map[string]any
-	var texts []string
-	for _, b := range resp.Content {
-		switch b.Type {
-		case "text":
-			texts = append(texts, b.Text)
-			content = append(content, map[string]any{"type": "text", "text": b.Text})
-		case "tool_use":
-			step.Calls = append(step.Calls, apiCall{b.ID, b.Name, b.Input})
-			content = append(content, map[string]any{"type": "tool_use", "id": b.ID, "name": b.Name, "input": json.RawMessage(orEmpty(b.Input))})
-		}
-	}
-	step.Text = strings.Join(texts, "\n")
-	u := resp.Usage
-	step.Input, step.Cached, step.Output = u.Input+u.CacheRead+u.CacheCreate, u.CacheRead, u.Output
-	c.messages = append(c.messages, map[string]any{"role": "assistant", "content": content})
-	return step, nil
-}
-
-func (c *messagesChat) results(calls []apiCall, outputs []string, failed []bool) {
-	var blocks []map[string]any
-	for i, call := range calls {
-		blocks = append(blocks, map[string]any{"type": "tool_result", "tool_use_id": call.ID, "content": outputs[i], "is_error": failed[i]})
-	}
-	c.messages = append(c.messages, map[string]any{"role": "user", "content": blocks})
-}
-
-// ── OpenAI chat completions ─────────────────────────────────────────────
-
-type openAIChat struct {
-	http             *http.Client
-	base, key, model string
-	system, prompt   string
-	tools            []apiTool
-	messages         []map[string]any
-}
-
-func (c *openAIChat) next(ctx context.Context) (apiStep, error) {
-	if c.messages == nil {
-		c.messages = []map[string]any{{"role": "system", "content": c.system}, {"role": "user", "content": c.prompt}}
-	}
-	tools := make([]map[string]any, len(c.tools))
-	for i, t := range c.tools {
-		tools[i] = map[string]any{"type": "function", "function": map[string]any{"name": t.Name, "description": t.Description,
-			"parameters": json.RawMessage(orEmpty(t.Schema))}}
-	}
-	body := map[string]any{"model": c.model, "messages": c.messages}
-	if len(tools) > 0 {
-		body["tools"] = tools
-	}
-	headers := map[string]string{"X-Title": "tubas"} // how OpenRouter and others name the app
-	if c.key != "" {
-		headers["Authorization"] = "Bearer " + c.key
-	}
-	var resp struct {
-		Choices []struct {
-			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
-					ID       string `json:"id"`
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage struct {
-			Prompt     int `json:"prompt_tokens"`
-			Completion int `json:"completion_tokens"`
-			Details    struct {
-				Cached int `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-		} `json:"usage"`
-	}
-	if err := postJSON(ctx, c.http, strings.TrimRight(c.base, "/")+"/chat/completions", headers, body, &resp); err != nil {
-		return apiStep{}, err
-	}
-	if len(resp.Choices) == 0 {
-		return apiStep{}, errors.New("the model returned no answer")
-	}
-	msg := resp.Choices[0].Message
-	step := apiStep{Text: msg.Content, Input: resp.Usage.Prompt, Cached: resp.Usage.Details.Cached, Output: resp.Usage.Completion}
-	assistant := map[string]any{"role": "assistant", "content": msg.Content}
-	if len(msg.ToolCalls) > 0 {
-		var calls []map[string]any
-		for _, tc := range msg.ToolCalls {
-			step.Calls = append(step.Calls, apiCall{tc.ID, tc.Function.Name, json.RawMessage(orEmpty(json.RawMessage(tc.Function.Arguments)))})
-			calls = append(calls, map[string]any{"id": tc.ID, "type": "function",
-				"function": map[string]string{"name": tc.Function.Name, "arguments": tc.Function.Arguments}})
-		}
-		assistant["tool_calls"] = calls
-	}
-	c.messages = append(c.messages, assistant)
-	return step, nil
-}
-
-func (c *openAIChat) results(calls []apiCall, outputs []string, failed []bool) {
-	for i, call := range calls {
-		text := outputs[i]
-		if failed[i] {
-			text = "error: " + text
-		}
-		c.messages = append(c.messages, map[string]any{"role": "tool", "tool_call_id": call.ID, "content": text})
-	}
 }
 
 func orEmpty(raw json.RawMessage) json.RawMessage {

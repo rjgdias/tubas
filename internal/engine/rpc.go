@@ -14,8 +14,8 @@ import (
 
 // rpcConn speaks JSON-RPC over a child's stdin and stdout, one message
 // per line: requests from us wait for their answer, notifications and
-// requests from the child go to the handlers. codex's app-server and ACP
-// agents both talk this way (ACP adds "jsonrpc": "2.0").
+// requests from the child go to the handlers: the tubas gateway (MCP)
+// talks this way.
 type rpcConn struct {
 	w        io.Writer
 	version  bool // send "jsonrpc": "2.0"

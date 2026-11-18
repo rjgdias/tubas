@@ -2,7 +2,6 @@
 name: leo
 role: engineer
 color: blue
-harness: claude
 model: sonnet
 tools:
   data: read

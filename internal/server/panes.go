@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"tubas/internal/engine"
 	"tubas/internal/pane"
 )
 
@@ -22,17 +21,6 @@ import (
 // POST   /panes/{id}/resize             {w, h}
 // DELETE /panes/{id}                    stop it
 // GET    /layout, PUT /layout           how the screen arranges them
-
-// Resolve finds a program for a pane: claude is the one tubas runs
-// agents with, anything else is looked up on the PATH by the system.
-func Resolve(name string) string {
-	if name == "claude" {
-		if p, err := engine.FindClaude(); err == nil {
-			return p
-		}
-	}
-	return name
-}
 
 // OpenRequest opens a pane.
 type OpenRequest struct {

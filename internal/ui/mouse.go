@@ -32,42 +32,76 @@ const bodyX, bodyY = 1, 4
 const doubleClick = 400 * time.Millisecond
 
 func (m Model) mouse(msg tea.MouseMsg) (Model, tea.Cmd) {
-	if m.showHelp || m.width == 0 {
+	if m.width == 0 {
 		return m, nil
-	}
-	if m.menu != nil {
-		return m.menuClick(msg)
 	}
 	right := msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonRight
 	wheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown
 	up := msg.Button == tea.MouseButtonWheelUp
 	press := msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft
 
+	if m.showHelp { // a click anywhere closes the keys panel
+		if press || right {
+			m.showHelp = false
+		}
+		return m, nil
+	}
+	if m.menu != nil {
+		return m.menuClick(msg)
+	}
 	// What is being dragged follows the mouse until the button comes up.
 	if ps := m.panes; ps != nil && (ps.drag != nil || ps.sel != nil) {
 		return m.dragging(msg)
 	}
+	cw, bodyH := m.width-2, m.bodyHeight()
+	bx, by := msg.X-bodyX, msg.Y-bodyY
 	if m.form != nil {
+		if press {
+			return m.clickForm(msg, bx, by)
+		}
 		return m, nil
 	}
 	if press && msg.Y == 1 { // the top bar
 		return m.clickNav(msg.X - bodyX)
 	}
-	cw, bodyH := m.width-2, m.bodyHeight()
-	bx, by := msg.X-bodyX, msg.Y-bodyY
-
+	if press && msg.Y == 0 { // the header: the model, the agents
+		return m.clickHeader(msg.X)
+	}
 	if press && m.section == SecChat && m.session.Pending != nil {
 		if bar := bodyY + bodyH + len(m.viewPopup()); msg.Y == bar {
 			return m.clickBar(bx, cw)
 		}
 	}
+	// Below the body: the / and @ menu, then the line of hints and
+	// notices, where every "key action" is a button.
+	if press && by >= bodyH {
+		if mm, cmd, ok := m.clickPopup(by - bodyH); ok {
+			return mm, cmd
+		}
+		return m.clickHint(msg)
+	}
 	if by < 0 || by >= bodyH || bx < 0 || bx >= cw {
 		return m, nil
 	}
 	switch {
+	case m.connect != nil:
+		if press {
+			return m.clickConnect(msg, by)
+		}
+		return m, nil
+	case m.modelPick != nil:
+		if press {
+			return m.clickModelPicker(msg, by, bodyH)
+		}
+		return m, nil
+	case m.mcp != nil:
+		if press {
+			return m.clickMCP(msg, by)
+		}
+		return m, nil
 	case m.section != SecChat:
 		if press {
-			return m.clickList(bx, by, cw)
+			return m.clickSection(msg, bx, by, cw)
 		}
 		return m, nil
 	case m.picker:
@@ -82,12 +116,18 @@ func (m Model) mouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 				return m.attachConversation(convs[by-2])
 			}
 		}
+		if press {
+			return m.clickHint(msg) // "r renames · d deletes" in its header
+		}
 		return m, nil
 	case m.review:
 		return m, nil
 	case !m.split():
 		if wheel && msg.Action == tea.MouseActionPress {
 			m = m.scrollBy(map[bool]int{true: 3, false: -3}[up])
+		}
+		if press {
+			return m.clickChat(msg)
 		}
 		return m, nil
 	}
@@ -285,6 +325,9 @@ func (m Model) clickPanes(msg tea.MouseMsg, bx, by, cw, bodyH int) (Model, tea.C
 			}
 			ps.lastClick.id, ps.lastClick.at = id, now
 			t.Focus = id
+		case msg.Button == tea.MouseButtonLeft && id == chatPane:
+			t.Focus = id
+			return m.clickChat(msg)
 		case msg.Button == tea.MouseButtonLeft:
 			t.Focus = id
 			if id != chatPane && (ps.copy == nil || ps.copy.id != id) {

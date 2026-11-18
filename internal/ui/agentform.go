@@ -49,20 +49,12 @@ func (m Model) agentForm(a agent.Agent, template string) *form {
 		f.fields = append(f.fields, field{key: "template", label: "start from", kind: fChoice, options: names, value: template,
 			hint: "fills the rest; you can change any of it"})
 	}
-	harness := orDefault(a.Harness, "claude")
 	provider := orDefault(a.Provider, "anthropic")
-	harnesses := slices.Clone(m.cfg.Harnesses)
-	if len(harnesses) == 0 {
-		harnesses = []string{"claude"}
-	}
-	if !slices.Contains(harnesses, harness) {
-		harnesses = append(harnesses, harness) // in the file, not installed here
-	}
 	providers := m.providerNames()
 	if !slices.Contains(providers, provider) {
 		providers = append(providers, provider)
 	}
-	models := m.modelsFor(harness, provider, a.Model)
+	models := m.modelsFor(provider, a.Model)
 	color := a.Color
 	if color == "" {
 		color = m.freeColor()
@@ -71,12 +63,10 @@ func (m Model) agentForm(a agent.Agent, template string) *form {
 		field{key: "name", label: "name", kind: fText, value: a.Name, hint: "lowercase, no spaces: how you call it, @name"},
 		field{key: "role", label: "role", kind: fText, value: a.Role, hint: "a few words, shown next to the name"},
 		field{key: "color", label: "color", kind: fChoice, options: colorNames, value: color},
-		field{key: "harness", label: "runs on", kind: fChoice, options: harnesses, value: harness,
-			hint: "what runs its loop: claude, codex, api (tubas calls the model) or an ACP agent"},
 		field{key: "provider", label: "provider", kind: fChoice, options: providers, value: provider,
-			hint: "where the model is served (claude and api): anthropic is your Claude setup"},
+			hint: "where the model is served · /connect adds one · anthropic: your key or company gateway"},
 		field{key: "model", label: "model", kind: fChoice, options: models, show: modelShow(models), value: modelValue(models, a.Model),
-			hint: modelHint(harness, provider)},
+			hint: modelHint(provider)},
 		field{key: "effort", label: "effort", kind: fChoice, options: effortNames, show: effortShow, value: a.Effort,
 			hint: "thinking is the priciest token"},
 	)
@@ -181,12 +171,12 @@ func (m Model) providerNames() []string {
 	return names
 }
 
-// modelsFor are the models to offer for a harness and provider; "" is
-// the harness's or provider's own default.
-func (m Model) modelsFor(harness, provider, current string) []string {
+// modelsFor are the models to offer for a provider; "" is the
+// provider's own default.
+func (m Model) modelsFor(provider, current string) []string {
 	var models []string
 	switch {
-	case (harness == "claude" || harness == "") && (provider == "anthropic" || provider == ""):
+	case provider == "anthropic" || provider == "":
 		// Claude's short names, then your gateway's own. A gateway serves
 		// its own names: a short name only works when your settings map it
 		// (ANTHROPIC_DEFAULT_SONNET_MODEL…), so only those are listed.
@@ -196,10 +186,8 @@ func (m Model) modelsFor(harness, provider, current string) []string {
 			}
 		}
 		models = append(models, m.cfg.Providers["anthropic"]...)
-	case harness == "claude" || harness == "api":
+	default:
 		models = append([]string{""}, m.cfg.Providers[provider]...)
-	default: // codex and ACP agents choose in their own settings
-		models = []string{""}
 	}
 	if current != "" && !slices.Contains(models, current) {
 		models = append(models, current)
@@ -227,16 +215,11 @@ func modelShow(models []string) []string {
 	return show
 }
 
-func modelHint(harness, provider string) string {
-	switch {
-	case (harness == "claude" || harness == "") && (provider == "anthropic" || provider == ""):
+func modelHint(provider string) string {
+	if provider == "anthropic" || provider == "" {
 		return "haiku: cheap, watching · sonnet: everyday · opus: hard digging"
-	case harness == "codex":
-		return "default: the one in codex's settings (or type a model in the file)"
-	case harness == "claude" || harness == "api":
-		return provider + "'s models · default: its first one"
 	}
-	return "default: the one in " + harness + "'s own settings"
+	return provider + "'s models · default: its first one"
 }
 
 // formChanged reacts to a choice: a new template refills the form.
@@ -244,15 +227,15 @@ func (m Model) formChanged(key string) Model {
 	if key == "run" && m.form != nil && m.form.kind == "pane" {
 		return m.paneFormRunChanged()
 	}
-	if (key == "harness" || key == "provider") && m.form != nil {
+	if key == "provider" && m.form != nil {
 		f := *m.form
 		f.fields = slices.Clone(f.fields)
-		models := m.modelsFor(f.get("harness"), f.get("provider"), "")
+		models := m.modelsFor(f.get("provider"), "")
 		for i := range f.fields {
 			if f.fields[i].key == "model" {
 				f.fields[i].options, f.fields[i].show = models, modelShow(models)
 				f.fields[i].value = modelValue(models, f.fields[i].value)
-				f.fields[i].hint = modelHint(f.get("harness"), f.get("provider"))
+				f.fields[i].hint = modelHint(f.get("provider"))
 			}
 		}
 		m.form = &f
@@ -278,7 +261,7 @@ func (m Model) agentFromForm(f *form) (agent.Agent, error) {
 	}
 	a.Name, a.Role, a.Color = f.get("name"), f.get("role"), f.get("color")
 	a.Model, a.Effort, a.Instructions = f.get("model"), f.get("effort"), f.get("instructions")
-	a.Harness, a.Provider = f.get("harness"), f.get("provider")
+	a.Harness, a.Provider = "", f.get("provider")
 	if a.Provider == "anthropic" {
 		a.Provider = "" // the default: your Claude setup
 	}

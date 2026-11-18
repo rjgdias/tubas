@@ -2,10 +2,10 @@ package engine
 
 import "tubas/internal/agent"
 
-// GatewayLaunch is how a harness starts the tubas tool gateway for one
-// turn: an MCP server over stdio. Every harness gets the same gateway, so
-// tools, access and approvals work the same on claude, codex, an ACP
-// agent or the api harness (agentes.chat and tucano do the same).
+// GatewayLaunch is how a turn starts the tubas gateway for the team's
+// connectors (data, reports, the workspace, MCP servers): an MCP server
+// over stdio, which checks each agent's access and asks you before a
+// write (agentes.chat and tucano do the same).
 type GatewayLaunch struct {
 	Command string
 	Args    []string
@@ -13,8 +13,6 @@ type GatewayLaunch struct {
 }
 
 // GatewayFunc gives an agent its gateway for one turn. turn routes its
-// approvals back; writeDirs are the worktrees it may change; harness
-// tells the gateway which shell it needs (claude asks through the
-// permission tool, the others get run_command). ok is false when the
-// agent has no tools at all.
-type GatewayFunc func(a agent.Agent, turn string, writeDirs []string, harness string) (launch GatewayLaunch, ok bool)
+// approvals back; writeDirs are the worktrees it may change. ok is false
+// when the agent reaches no connector at all.
+type GatewayFunc func(a agent.Agent, turn string, writeDirs []string) (launch GatewayLaunch, ok bool)

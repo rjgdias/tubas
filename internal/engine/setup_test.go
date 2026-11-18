@@ -56,7 +56,7 @@ func TestAPIHarnessGoesThroughYourClaudeSetup(t *testing.T) {
 		"ANTHROPIC_CUSTOM_HEADERS":       "X-Team: dados\nX-Other: 1",
 		"ANTHROPIC_DEFAULT_SONNET_MODEL": "acme-sonnet",
 	}, KeyHelper: "echo helper-token-2"}
-	eng := APIEngine{Setup: setup, Providers: Providers(nil), WorkDir: t.TempDir()}
+	eng := NativeEngine{Setup: setup, Providers: Providers(nil), WorkDir: t.TempDir()}
 	if eng.Name() == "api" {
 		t.Error("the header names the gateway")
 	}
@@ -68,31 +68,6 @@ func TestAPIHarnessGoesThroughYourClaudeSetup(t *testing.T) {
 	if reply.Text != "ok via acme" || got.path != "/anthropic/v1/messages" || got.auth != "Bearer helper-token-2" ||
 		got.team != "dados" || got.model != "acme-sonnet" {
 		t.Errorf("reply %q, request %+v", reply.Text, got)
-	}
-}
-
-// Agents get your setup, not the Claude Code session tubas may run inside;
-// behind a gateway, claude's telemetry is off; your key helper goes to
-// claude, which runs it (and runs it again on a 401).
-func TestClaudeGetsACleanQuietEnvironment(t *testing.T) {
-	t.Setenv("CLAUDECODE", "1")
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "host-session")
-	t.Setenv("CLAUDE_CODE_GIT_BASH_PATH", "C:/git/bash.exe")
-	p := Provider{Env: map[string]string{"ANTHROPIC_BASE_URL": "https://acme.example.com"}, KeyHelper: "get-token --team dados"}
-	env := strings.Join(p.Environ(), "\n")
-	for _, gone := range []string{"CLAUDECODE=", "CLAUDE_CODE_SESSION_ID="} {
-		if strings.Contains(env, gone) {
-			t.Errorf("%s belongs to the host session, not the agent", gone)
-		}
-	}
-	for _, kept := range []string{"CLAUDE_CODE_GIT_BASH_PATH=C:/git/bash.exe", "DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "ANTHROPIC_BASE_URL=https://acme.example.com"} {
-		if !strings.Contains(env, kept) {
-			t.Errorf("missing %s", kept)
-		}
-	}
-	if got := strings.Join(p.SettingsArgs(), " "); got != `--settings {"apiKeyHelper":"get-token --team dados"}` {
-		t.Errorf("settings args = %s", got)
 	}
 }
 

@@ -1,10 +1,12 @@
 # tubas
 
-A chat with AI in your terminal that grows into a team of agents, and every agent CLI you use, in one app.
+A chat with AI in your terminal that grows into a team of agents. tubas is its own agent harness: it runs every agent itself, with its own tools, on the model provider you choose.
 
-- **Just talk:** type `tubas` and ask. It starts as a plain chat with one assistant, on the model and provider your Claude settings already use (your company's gateway included). `/model` lists every model your provider serves.
-- **Your team, when you want one:** agents with a role, a model and their own tools hand work to each other with @mentions. You follow it all in a quiet chat and approve anything that touches the real world. Each agent runs on the harness you pick: Claude Code, Codex, any ACP agent (opencode, gemini, goose…), or tubas's own loop straight on a provider's API (DeepSeek, GLM, Kimi, Qwen, OpenRouter, a local Ollama).
-- **Every other agent:** claude, codex, gemini or any command runs in a real terminal pane next to the chat, in its own git worktree if you want, with its state (blocked, working, done) always in sight.
+- **Just talk:** type `tubas` and ask. It starts as a plain chat with one assistant. The first time, it asks for a key (`/connect`), or uses your company's gateway from your Claude settings on its own.
+- **Your team, when you want one:** agents with a role, a model and their own tools hand work to each other with @mentions. You follow it all in a quiet chat and approve anything that touches the real world.
+- **A real harness:** answers stream as they are written; agents read, search and edit code in their own git worktree, run commands (each one waits for your `y`), keep a checklist and read web pages. Each agent remembers the whole conversation, and a long one compacts itself.
+- **Any provider:** Anthropic (an API key or your company's gateway), DeepSeek, GLM, Kimi, Qwen, OpenRouter, OpenAI, Gemini, a local Ollama, or your own OpenAI-compatible server.
+- **Terminals next to the chat:** your shell, a dev server or any command runs in a real terminal pane, in its own git worktree if you want.
 - **It keeps working when you leave:** a background server holds the sessions, routines and panes. Close the window and come back later, from any terminal, by typing `tubas`.
 
 It is easy to use, everything has a screen (no file needs editing by hand), and being a terminal app makes it light.
@@ -15,11 +17,11 @@ The name comes from the whale shark (*tubarão-baleia*): the biggest fish in the
 
 ![/model lists what your company gateway serves](docs/model.png)
 
-![Panes: claude waiting for an answer, a shell, tabs in the sidebar](docs/panes.png)
+![Panes: terminals next to the chat, tabs in the sidebar](docs/panes.png)
 
 ## Install
 
-You need [Go](https://go.dev) 1.26 or newer, and a way to reach a model: [Claude Code](https://claude.com/claude-code) signed in is the default (each agent turn runs as a `claude -p` process, on your account or the provider your Claude settings point to, see [Your AI provider](#your-ai-provider)). Codex, an ACP agent or just an API key work too: see [Harnesses and providers](#harnesses-and-providers).
+You need [Go](https://go.dev) 1.26 or newer.
 
 ```bash
 go install .
@@ -35,11 +37,23 @@ That puts `tubas` in Go's bin folder (`~/go/bin`), which the Go installer adds t
 
 Type `tubas` anywhere and ask something. That's it: your personal tubas is a chat with one assistant.
 
-- The whole answer shows, with headings, lists, code and tables; `pgup` `pgdown` (or the wheel) scroll back.
+- **The first time,** when no model can be reached, tubas opens "Welcome to tubas": pick a provider, paste its key, and you're in. A company gateway in your Claude settings needs nothing: it just works.
+- The answer appears while it is written, with headings, lists, code and tables; `pgup` `pgdown` (or the wheel) scroll back.
 - Keep typing to continue the same conversation. `/new` (or `ctrl+n`) starts another; `ctrl+g` lists them all.
-- `/model` (or `ctrl+o`) picks the model: Claude's, or every one your company gateway serves. Type to filter, `enter` to pick.
+- `/model` (or `ctrl+o`) picks the model: every one your provider serves. Type to filter, `enter` to pick.
 - `/agents` adds a teammate (an analyst, an engineer, a reviewer…). With two or more, they hand work to each other with @mentions and you see who does what.
 - Type `/` to see every command, `?` for the keys.
+
+### Connecting a model: `/connect`
+
+`/connect` (or `/login`) lists the providers and how each one is reached: your company gateway (from your Claude settings), a key in an environment variable, a key you saved here, or nothing yet. Pick one and paste its key: tubas checks it by asking the provider for its models, then keeps it in your system's keychain (Windows Credential Manager, the macOS Keychain, the Secret Service on Linux), or, where there is none, in a file only you can read in your user folder. Keys never go into a team folder, and never travel over the background server's API.
+
+- **+ your own server** adds any OpenAI-compatible address (vLLM, LM Studio, LiteLLM…), with its model and an optional key.
+- `d` twice forgets a saved key, or a server of yours.
+- Which key wins: your Claude settings (a gateway, its token or `apiKeyHelper`), then the provider's environment variable, then the key saved here.
+- Connecting a provider while your assistant can't reach its own switches the assistant to it: connecting is all it takes to start.
+
+**Why not my Claude subscription?** Since February 2026 Anthropic allows the Claude Pro and Max logins only in Claude Code and claude.ai, so tubas, like opencode, offers no such login. Use an API key (billed per use), your company's gateway, or another provider.
 
 ### When an answer doesn't come
 
@@ -47,11 +61,9 @@ Type `tubas` anywhere and ask something. That's it: your personal tubas is a cha
 tubas doctor
 ```
 
-It checks, one step at a time, how agents reach a model on this computer: Claude Code, your Claude settings (a company gateway, its token script), the gateway's model list, and one real answer with the same engine the chat uses. Each step says what it found and, when it fails, what to do; the output has no keys, so you can share it.
+It checks, one step at a time, how agents reach a model on this computer: the keys each provider uses, your Claude settings (a company gateway, its token script, its model list), one real answer from every provider your agents use, the shell agents run commands in, and agent files from before. Each step says what it found and, when it fails, what to do; the output has no keys, so you can share it.
 
-While an answer is coming, the chat says when the provider is failing (`⟳ the provider failed (500) · trying again, 3 of 10`) instead of a silent "working": Claude Code retries a failing gateway for minutes. A key the gateway refuses twice stops the turn at once and says to check your token script, and a failure shows its whole reason.
-
-An older Claude Code works too: tubas reads `claude --help` and leaves out the options that version doesn't know (it stops at the first one otherwise), the closest older way when there is one: `--disallowedTools` for `--tools ""`, and your token script run by tubas when there is no `--settings`. `tubas doctor` names what is missing; `claude update` brings it.
+While an answer is coming, the chat says when the provider is failing (`⟳ the provider failed (529) · trying again, 3 of 9`) instead of a silent "working". tubas retries 408, 409, 429 and 5xx answers and dropped connections, waiting what the provider asks (`retry-after`). An expired token from your `apiKeyHelper` is fetched again once. A gateway that refuses a field (thinking, effort, cache) gets the request without it, and tubas remembers that for that gateway.
 
 ### An example team
 
@@ -79,7 +91,7 @@ my-team/
   routines.yaml   agents on a schedule (optional)
 ```
 
-`team.yaml` says where tools come from. A **connector** is built into tubas, a git repository, or any [MCP](https://modelcontextprotocol.io) server, over stdio or HTTP. The easy way is `/mcp` in the chat: it lists the MCP servers your Claude Code already has (yours, the project's, `.mcp.json`) and adds one with `enter`, as `claude: NAME`, so tubas reads it from Claude Code each time and its tokens stay there. By hand:
+`team.yaml` says where tools come from. A **connector** is built into tubas, a git repository, or any [MCP](https://modelcontextprotocol.io) server, over stdio or HTTP. The easy way is `/mcp` in the chat: it lists the MCP servers your Claude Code setup already has (yours, the project's, `.mcp.json`) and adds one with `enter`, as `claude: NAME`, so tubas reads it from there each time and its tokens stay there. By hand:
 
 ```yaml
 name: support
@@ -88,6 +100,10 @@ lead: ana                 # answers when nobody else is picked (default: the fir
 routing: router           # questions with no @: lead (default), router or all
 max_hops: 6
 notify: all               # all (default), window or off: see Notifications
+provider: deepseek        # agents that name no provider use this one (default: anthropic)
+allow_commands:           # shell commands that run without asking you
+  - go test
+  - npm run lint
 
 connectors:
   db:                       # built in: read-only SQL over a SQLite file
@@ -119,15 +135,14 @@ Each agent file gives the agent an access level per connector:
 name: ana
 role: analyst
 color: orange           # orange, blue, purple, green, pink or cyan
-harness: claude         # what runs it: claude (default), codex, api, or an ACP agent (opencode…)
-provider: deepseek      # where its model is served: anthropic (default, your Claude setup), deepseek, glm…
-model: deepseek-v4-pro  # for claude on anthropic: haiku, sonnet, opus
+provider: deepseek      # where its model is served: anthropic (default), deepseek, glm, your own…
+model: deepseek-v4-pro  # on anthropic: haiku, sonnet, opus, or your gateway's names
 effort: medium          # low, medium, high; parallel turns default to low
 tools:
   db: read              # none, read or write
   github: write
 can_call: [bia]         # who it may hand off to
-token_limit: 50000      # the turn stops if its context grows past this
+token_limit: 50000      # past this, the conversation is compacted
 ---
 You are Ana, the support analyst...
 ```
@@ -136,7 +151,7 @@ You are Ana, the support analyst...
 - **read**: it sees only the tools that read. A tool reads when its server marks it so (`readOnlyHint`) or when `team.yaml` lists it under `read`.
 - **write**: it sees every tool, and each one that writes waits for your `y` before it runs.
 
-You rarely write these files by hand: agents › `n` makes an agent from a template, `enter` edits one, `p` opens the permissions table.
+You rarely write these files by hand: agents › `n` makes an agent from a template, `enter` edits one, `p` opens the permissions table. An agent file from before may have a `harness:` line: it is read and ignored (tubas runs every agent itself), and goes the next time the agent is saved.
 
 ### Who answers
 
@@ -146,7 +161,7 @@ You rarely write these files by hand: agents › `n` makes an agent from a templ
 | `@todos what would you check first?` | everyone at once; whoever has nothing to add passes, and the lead closes the round |
 | `is the load ok?` | the team's `routing`: the **lead**, a **router**, or **all** |
 
-The router follows [agentes.chat's design](https://github.com/agentes-chat/agentes-chat/blob/main/docs/adr/0013-router.md): code picks the candidates, one cheap call (haiku, with a JSON schema) scores them, and code decides. It picks one agent, or several when the question speaks to the whole team; when nobody fits, the lead answers. The screen shows the pick and why (`→ router: @leo 0.80 · pipeline question`). Agents brought in this way may answer `PASS`; agents you name always answer.
+The router follows [agentes.chat's design](https://github.com/agentes-chat/agentes-chat/blob/main/docs/adr/0013-router.md): code picks the candidates, one cheap call to the team provider's fast model (haiku on Anthropic) scores them, and code decides. It picks one agent, or several when the question speaks to the whole team; when nobody fits, the lead answers. The screen shows the pick and why (`→ router: @leo 0.80 · pipeline question`). Agents brought in this way may answer `PASS`; agents you name always answer.
 
 ### Workspaces of the agents
 
@@ -159,46 +174,69 @@ my-team/.tubas/shared/           everyone reads and writes
 
 Agents read each other's folders (`@leo/notes.md`) but write only in their own and in `shared/`. Paths cannot leave these folders. Set `workspace: read` or `none` in an agent's tools to limit it.
 
-## Harnesses and providers
+## The harness
 
-An agent's **harness** is what runs its loop; its **provider** is where its model is served. One team can mix them: Iris on Claude, Leo on Codex, Nico on DeepSeek, with the same tools, handoffs and approvals. As in agentes.chat, tucano and t3code, tubas offers only what this computer has (settings › harnesses and providers lists it), and nothing it installs.
+tubas runs the agent loop itself: it sends the conversation and the tools to the model, runs the tools the model calls, sends the results back, until the agent answers.
 
-| Harness | What runs the agent | Needs |
+**Its own tools,** run inside the turn (they keep the shell's folder between commands, remember which files the agent read, stop with the turn and ask you directly):
+
+| Tool | What it does |
+| --- | --- |
+| `read` | a file with line numbers, in parts (2000 lines at a time); refuses binary files |
+| `write` | a whole file, in the agent's worktree only; an existing file must have been read first and be unchanged since |
+| `edit` | exact text replaced, once (or every time with `replace_all`); keeps Windows line ends |
+| `glob` | files by name (`**/*.go`), newest first, leaving out what `.gitignore` ignores |
+| `grep` | file contents by regular expression, with [ripgrep](https://github.com/BurntSushi/ripgrep) when it's installed |
+| `bash` | a command in the agent's worktree: bash (Git Bash on Windows, PowerShell when there's none), the folder kept between commands, stopped after 2 minutes (10 at most) with everything it started. **Every command waits for your `y`,** except those `allow_commands` allows (anything chained after them, `;` `&&` `|` `$(`, asks again) |
+| `todo_write` | a checklist of the task, shown on the agent's turn |
+| `web_fetch` | a web page as text; you allow each site once per conversation |
+
+Files and the shell exist only for agents with a repository (see Code); everyone gets the checklist and the web. The team's connectors (SQL, reports, MCP servers…) come through the tubas gateway, an MCP server started for the turn, which lists only what the agent's access allows and holds every write until you approve it.
+
+**Streaming and retries.** Text reaches the screen as it is written. A failing provider is tried again, up to 10 times, and each attempt shows. A stream cut half-way takes its text back and starts again. An answer cut by the output limit carries on, a few times.
+
+**Thinking and effort.** On models that take them, agents think adaptively (`thinking: adaptive`), and `effort:` in the agent file is sent as is. The model table (`internal/llm/models.go`) knows each Claude model's context, output limit and prices.
+
+**Memory.** Each agent keeps its whole side of a conversation (questions, answers, tool calls and results) in `.tubas/conversations/<conversation>/<agent>.jsonl`, append-only. A follow-up continues it, told only what happened since it last spoke. The file is never edited: thinking blocks are sent back exactly as they came, as the models require. Deleting a conversation deletes its histories.
+
+**Compaction.** When a request grows past the agent's `token_limit` (or most of the model's context, up to 150K tokens), the model summarizes the conversation and the next requests start from the summary, between tool rounds, never inside one. The chat shows `compact(the conversation is long)`.
+
+**The prompt cache.** The system prompt and tools stay the same within a conversation, and each request asks for the cache, so earlier steps cost a fraction (`34.9k tok · 58% cached · $0.005`).
+
+## Providers
+
+An agent's **provider** is where its model is served. One team can mix them: Iris on your company's Claude gateway, Leo on DeepSeek, Nico on a local Ollama, with the same tools, handoffs and approvals.
+
+| Provider | Endpoint | Key |
 | --- | --- | --- |
-| `claude` (default) | `claude -p` | Claude Code signed in, or a provider below |
-| `codex` | `codex app-server`, the protocol tucano and t3code drive | Codex installed and `codex login` |
-| an ACP agent: `opencode`, `gemini`, `goose`, `qwen`, `kimi`, `cursor`, `copilot`… | the [Agent Client Protocol](https://agentclientprotocol.com) | that CLI installed and signed in |
-| `api` | tubas's own loop, calling the provider's API | an API key, or a local model |
+| `anthropic` (default) | your company gateway from your Claude settings, else Anthropic's API | the gateway's token or `apiKeyHelper`, `ANTHROPIC_API_KEY`, or `/connect` |
+| `deepseek`, `glm`, `kimi`, `qwen` | their Anthropic-compatible endpoints | `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY`, or `/connect` |
+| `openrouter`, `openai`, `gemini` | their OpenAI-compatible endpoints | `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `/connect` |
+| `ollama` | a local Ollama | none |
+| yours | any OpenAI-compatible address, added with `/connect` | optional |
 
-| Provider | On `claude` | On `api` | Key |
-| --- | --- | --- | --- |
-| `anthropic` (default) | your Claude login or the gateway, Bedrock or Vertex in your Claude settings | Anthropic's API | `ANTHROPIC_API_KEY` (api only) |
-| `deepseek`, `glm`, `kimi`, `qwen` | their Anthropic-compatible endpoints | the same | `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY` |
-| `openrouter`, `openai`, `gemini` | — | their OpenAI-compatible endpoints | `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` |
-| `ollama` | — | a local Ollama | none |
-
-`provider:` in `team.yaml` sets the team's default. Add your own providers there, and harnesses that speak ACP; keys are named by their environment variable and never written to a file:
+`provider:` in `team.yaml` sets the team's default. A team can add providers there too; keys are named by their environment variable and never written to a file:
 
 ```yaml
-provider: deepseek          # agents that name none
 providers:
   work:
-    anthropic: https://llm.example.com/anthropic   # Anthropic-compatible: claude and api
-    openai: https://llm.example.com/v1             # OpenAI-compatible: api
+    anthropic: https://llm.example.com/anthropic   # Anthropic-compatible, used first
+    openai: https://llm.example.com/v1             # OpenAI-compatible
     key_env: WORK_LLM_KEY
     models: [big-model, small-model]               # first: the default, last: the router's
     prices: { big-model: [3, 0.3, 15] }            # US$ per million tokens: input, cached, output
-harnesses:
-  dsh: { acp: "dsh --profile acp" }                # any agent that speaks ACP
 ```
 
-Whatever the harness, the tools are the tubas gateway (the same MCP server for all), so access and approvals don't change:
+What a turn cost: Claude models are priced from the model table; others from `prices:` when you give them, else the turn shows tokens only. A model that is not Claude's shows next to the turn (`· deepseek-v4-pro`).
 
-- **codex** starts with its own shell and extras off and its approvals declined, as tucano does. A writer edits files in its worktree under codex's sandbox; shell commands go through the gateway's `run_command`, which waits for your `y`.
-- **ACP agents** ask tubas before acting: reading is allowed, editing inside the worktree is allowed, a command waits for your `y`, anything else is refused, and "always" is never chosen.
-- **api** agents get the gateway's file tools for their repositories (read, list, search, write in the worktree) and `run_command`.
+### Your company's gateway
 
-What a turn cost: a subscription (Claude's or ChatGPT's) shows `plan` instead of a price; claude on Anthropic shows claude's own figure; an `api` turn is priced from `prices:` when you give them, else shows tokens only. A model that is not Claude's shows next to the turn (`· deepseek-v4-pro`).
+A work setup usually names the gateway in the `env` block of `~/.claude/settings.json` (`ANTHROPIC_BASE_URL`, a token or a script that fetches it). tubas reads your user settings and the team folder's `.claude/settings.json` and `settings.local.json`, the way [tucano](https://github.com/eduwxyz/tucano) does, and uses only what chooses and reaches the provider. The header says which one is in use: `native · gateway llm.example.com`. Nothing to configure in tubas.
+
+- **A token from a script.** When your settings fetch the key with an `apiKeyHelper`, tubas runs it (in sh, or Git Bash on Windows), reuses the token for 5 minutes (or `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`), and runs it again when the gateway says 401.
+- **Your gateway's headers and model names.** `ANTHROPIC_CUSTOM_HEADERS` is sent, and `ANTHROPIC_DEFAULT_SONNET_MODEL` (and the opus and haiku ones) make `model: sonnet` mean whatever your gateway calls it. tubas also asks the gateway which models it serves (`/v1/models`, then `/models`): `/model` lists them all, next to the short names your settings map (`sonnet → acme-claude-sonnet`). When the list can't be fetched, `/model` says why, and you can still type a model name.
+- **An older gateway.** A gateway that refuses a field (thinking, effort, cache) gets the request without it from then on; one that ignores streaming and answers in one piece works too.
+- Bedrock, Vertex and Foundry are not reached: `/connect` another provider.
 
 ## The app
 
@@ -208,11 +246,11 @@ Seven sections, always in the top bar: **chat · inbox · agents · routines · 
 | --- | --- |
 | chat | the conversation |
 | inbox | everything waiting for you, with a count in the top bar: approvals from any session or routine (answered in any order with `y` / `n`), routine results, skills agents suggest |
-| agents | each agent: model, effort, access, who it can call, skills, escalation, instructions. `n` new, `enter` edit, `p` permissions, `s` skills |
+| agents | each agent: provider, model, effort, access, who it can call, skills, escalation, instructions. `n` new, `enter` edit, `p` permissions, `s` skills |
 | routines | agents on a schedule: next run, last runs. `n` new, `enter` edit, `space` on/off, `r` run now, `d` delete |
 | connectors | each connector, what runs it and each agent's access |
 | files | what the agents wrote (workspaces, `shared/`, reports), newest first, with a preview |
-| settings | routing, lead, hops, notifications, the AI providers found on this computer, quiet hours, retries. `e` edit, `r` look for AI again |
+| settings | routing, lead, hops, notifications, the providers connected, quiet hours, retries. `e` edit |
 
 Every change is a form: `↑↓` moves, `←→` picks an option, letters type, `enter` on a long text (instructions, a routine's prompt, a skill) opens your `$EDITOR`, `ctrl+s` saves, `esc` cancels. Each form says which file it writes.
 
@@ -229,6 +267,7 @@ Type `/` in the chat: every command, with what it does, filtered as you type (by
 | `/copy` | copy the last answer |
 | `/export [file]` | save the conversation as Markdown, in the folder you are in |
 | `/model [name]` | pick the model from a list (your gateway's too), or set it at once: `/model haiku` |
+| `/connect` (`/login`) | connect a provider: paste its key, or add your own server |
 | `/usage` | tokens and cost of the conversation |
 | `/doctor` | `tubas doctor` in a terminal next to the chat |
 | `/mcp` | MCP servers: the team's (enter tests one: does it start, how many tools), and yours from Claude Code to add with `enter`; `d` removes |
@@ -263,28 +302,36 @@ Letters are always text, so a question can start with any word. Only `y`, `n` an
 
 ### The mouse
 
-Almost everything you reach with a key, you can click. `tubas -mouse=false` leaves the mouse to your terminal.
+Everything you reach with a key, you can click. `tubas -mouse=false` leaves the mouse to your terminal.
+
+**Every hint is a button.** The lines that say a key and what it does (`enter send`, `/ commands`, `? keys`, `esc stop`, `ctrl+s save`, `esc cancel`, `n new`, `d removes`, `y deletes it for good`) do it when clicked, and so do the start screen's suggestions (`/model changes the model`). A notice never hides them: it shows where the grey text of the input is, and goes after a few seconds (one that asks, like `y deletes it`, waits for you).
 
 | Click | What it does |
 | --- | --- |
 | a section in the top bar | opens it; the count at the right opens the conversation list |
+| the model in the header | the model list; an agent's name (in a team) opens it among the agents |
+| a command in the `/` menu, an agent in the `@` menu | runs it · picks them |
+| a model in the model list, a server in `/mcp`, a provider in `/connect` | picks it · selects it (a second click adds or tests it) · connects it |
 | a workspace, tab or conversation in the sidebar | shows it (a conversation opens in the chat) |
 | `+ new tab`, `+ new conversation` in the sidebar | the same as `ctrl+b c` and `ctrl+n` |
+| a row in a section's list | selects it; a click on the selected row opens it |
+| a field in a form, an option in it | moves there · chooses that option; a long text opens your editor |
+| `↓ N more lines` in the chat | back to the bottom |
+| anywhere, while the keys panel is open | closes it |
 | a pane | focuses it; drag over a terminal to select text, copied when you let go |
 | a pane's header, twice | zooms it, twice again to go back |
 | the `✕` in a pane's header | closes it (asks first while the program runs) |
 | the border between two panes | drag it to resize them |
 | `y` · `n` · `v` on an approval bar | approve · deny · details |
-| a row in the conversation list or in a section's list | shows or selects it |
 | right click on a conversation, a tab or a workspace (sidebar or list) | a menu: rename it, or delete it (it asks in the menu first) |
 
 The wheel scrolls a terminal's history or the chat.
 
 ## Sessions and the background server
 
-`tubas` starts a server for the team in the background (or finds the one already running), and the window attaches to it. Sessions, routines, approvals and panes live in the server, so closing the window, `ctrl+c` or `ctrl+b q` only detaches: agents keep working, routines keep running. Run `tubas` again to come back. Finished sessions are saved in `.tubas/sessions/`.
+`tubas` starts a server for the team in the background (or finds the one already running), and the window attaches to it. Sessions, routines, approvals and panes live in the server, so closing the window, `ctrl+c` or `ctrl+b q` only detaches: agents keep working, routines keep running. Run `tubas` again to come back. Finished sessions are saved in `.tubas/sessions/`; tubas writes a `.gitignore` in `.tubas` so none of it goes into git.
 
-Each question you send is a session on the server; a follow-up is a new session in the same **conversation**, so the sidebar and `ctrl+g` list conversations (titled by their first question), not every message. Opening one replays it whole. `d` in the list (or `/delete` for the one on screen) deletes a conversation for good, from the screen and from `.tubas/sessions/`, after asking; one still answering is stopped first.
+Each question you send is a session on the server; a follow-up is a new session in the same **conversation**, so the sidebar and `ctrl+g` list conversations (titled by their first question), not every message. Opening one replays it whole. `d` in the list (or `/delete` for the one on screen) deletes a conversation for good, from the screen and from `.tubas/`, after asking; one still answering is stopped first.
 
 Every session has a state, the same on screen and on the command line: **blocked** (waits for you), **working**, **done** (finished, not seen yet) and **idle** (seen). The top bar sums them up (`1 blocked · 2 working`), the sidebar lists the conversations with their state, and the inbox gathers what every session waits for, not only the one on screen.
 
@@ -308,20 +355,20 @@ connectors:
 
 Who works where is the permissions table: `api: write` for leo, `api: read` for nico.
 
-- **read**: the agent reads, searches and lists files in your checkout, and changes nothing.
-- **write**: the session gets its own git worktree in `.tubas/worktrees/`, on its own branch (`tubas/<session>-<title>`). The agent edits there freely. Every shell command waits for your `y`, with the exact command, why the agent wants it and where it runs; "always" is not offered. Anything outside the worktree is denied. Agents never commit, push or touch your checkout.
+- **read**: the agent reads, searches and lists files in your checkout (`read`, `glob`, `grep`), and changes nothing.
+- **write**: the session gets its own git worktree in `.tubas/worktrees/`, on its own branch (`tubas/<session>-<title>`). The agent edits there freely (`edit`, `write`). Every `bash` command waits for your `y`, with the exact command, why the agent wants it and where it runs; "always" is not offered (`allow_commands` in `team.yaml` is the way to let some run). Anything outside the worktree is refused. Agents never commit, push or touch your checkout.
 
 When the session ends, the chat shows what changed (`✎ api · 3 files · +12 −4 · v review`). `v` opens the review: the files and the diff; `m` merges into the base branch of your checkout (refused if your checkout is on another branch or has changes of its own), `p` pushes the branch and opens a pull request with `gh`, `d` (twice) discards the worktree and its branch.
 
-## Panes: every agent CLI, next to the chat
+## Panes: terminals next to the chat
 
-Not every agent is a tubas agent. A pane is a real terminal inside tubas: claude, codex or gemini with their own screens, keys and prompts, your shell, a dev server, any command. Panes live in **tabs**, and tabs in **workspaces**: the team, each repository connector, and any folder you add.
+A pane is a real terminal inside tubas: your shell, a dev server, a test watcher, any command. Panes live in **tabs**, and tabs in **workspaces**: the team, each repository connector, and any folder you add.
 
 | Key | What it does |
 | --- | --- |
 | `ctrl+b` then `v` / `-` | a new pane to the right / below the focused one |
 | `ctrl+b` then `c` | a new tab, with a new pane |
-| `ctrl+b` then `a` | the new pane menu, with the first agent CLI found picked |
+| `ctrl+b` then `a` | the new pane menu, ready for a command |
 | `ctrl+b` then `h` `j` `k` `l` (or arrows) | move between panes; `o` goes to the next one |
 | `ctrl+b` then `n` / `p`, `1`…`9` | next / previous tab, tab by number |
 | `ctrl+b` then `w` | the next workspace |
@@ -335,38 +382,17 @@ Not every agent is a tubas agent. A pane is a real terminal inside tubas: claude
 | `ctrl+b` then `r` | review what a pane changed in its worktree (merge, push, discard) |
 | `ctrl+b` twice | send one `ctrl+b` to the program |
 
-The new pane menu asks what to run (your shell, an agent CLI found on this computer, or any command, flags included) and where: the workspace's folder, the folder you opened tubas from, a repository's checkout, or **a new worktree** of it on its own branch (`tubas/p2-claude`), so a claude in a pane never touches your checkout either. In a repository's workspace, an agent gets a new worktree by default.
+The new pane menu asks what to run (your shell, or any command, flags included) and where: the workspace's folder, the folder you opened tubas from, a repository's checkout, or **a new worktree** of it on its own branch (`tubas/p2-…`), so what you run there never touches your checkout.
 
 Keys go to the focused pane, `ctrl+c` included; tubas keeps only `ctrl+b` and `alt+1…7`. The chat is a pane too: move to it and type as usual.
 
-**The sidebar** lists every workspace and its tabs with the state of what runs inside, and the team's conversations below them, so nothing waiting for you is out of sight. While you only chat (no terminal, no workspace of yours), it lists just the conversations: a workspace that holds nothing but the chat stays out of it. It shows up by itself once there are panes or a few sessions and the window is wide enough; `ctrl+b b` decides. Without it, a line of tabs sits above the panes.
+**The sidebar** lists every workspace and its tabs with the state of what runs inside, and the team's conversations below them, so nothing waiting for you is out of sight. While you only chat (no terminal, no workspace of yours), it lists just the conversations. It shows up by itself once there are panes or a few sessions and the window is wide enough; `ctrl+b b` decides. Without it, a line of tabs sits above the panes.
 
 **Copy mode** (`ctrl+b [` or the wheel) shows what the pane printed, 5000 lines back: `h` `j` `k` `l`, `w` `b`, `0` `$`, `g` `G`, `pgup` `pgdown` move; `/` searches back (`n` again, `N` forward); `v` starts a selection; `y` or `enter` copies it, or the line under the cursor; `q` goes back to the live terminal.
 
-### States, read from the screen
+**States.** Each pane has a state: **blocked** when the program asks something (a `(y/n)`, a "Do you want to…"), **working** while it prints on its own, **idle** when it waits, **done** when the program exited. The pane's header, its tab in the sidebar and the top bar show them (`panes 1 blocked`).
 
-Each pane has a state: **blocked** when the program asks something, **working** while it works, **idle** when it waits, **done** when an agent finished what you asked and you have not looked yet (or when the program exited). The pane's header, its tab in the sidebar and the top bar show them (`panes 1 blocked`).
-
-tubas knows how a dozen agent CLIs show their state (claude, codex, gemini, qwen, copilot, opencode, crush, aider, goose, cursor-agent, amp, kimi): claude's "esc to interrupt" means working, its "Do you want to proceed?" blocked. It recognizes the agent by the program a pane runs, or, for a few with a distinctive banner, by its screen when you started it from a shell. Anything else gets the generic reading: a `(y/n)` or "Do you want to…" is blocked, printing on its own is working. Only claude's phrases have been checked against the real program so far.
-
-To teach it another agent, or correct one, add a YAML file per agent to `~/.tubas/detect/` or the team's `detect/` folder (a file with a built-in's name replaces it):
-
-```yaml
-name: myagent
-commands: [myagent]            # program names that run it
-signature: ["myagent v1"]      # text only it prints, to spot it started from a shell
-blocked: ["approve?", "(y/n)"]  # it asks you something
-working: ["esc to cancel"]     # it is working
-resume: ["--continue"]         # continues its last conversation, after a restart
-```
-
-### After a restart
-
-Panes run in the background server, in a pseudo-terminal (ConPTY on Windows), with a terminal emulator keeping their screen: close the window and they keep running.
-
-When the server itself restarts (`tubas stop`, a crash, the computer restarting), the panes come back too: each program starts again in its folder (its worktree included), in the same workspaces, tabs and layout, and agents that can continue their last conversation do (`claude --continue`, `codex resume --last`, `opencode --continue`, `aider --restore-chat-history`). What was running inside a shell does not come back, and a pane you closed, or whose program ended on its own, stays gone. The list lives in `.tubas/panes.json`.
-
-A pane starts clean: the variables that mark a process as running inside a Claude Code session are not passed on, so a claude in a pane is a session of its own. The ones that pick your AI provider are.
+**After a restart.** Panes run in the background server, in a pseudo-terminal (ConPTY on Windows), with a terminal emulator keeping their screen: close the window and they keep running. When the server itself restarts (`tubas stop`, a crash, the computer restarting), each program starts again in its folder (its worktree included), in the same workspaces, tabs and layout. What was running inside a shell does not come back, and a pane you closed, or whose program ended on its own, stays gone. The list lives in `.tubas/panes.json`.
 
 ## Notifications
 
@@ -381,9 +407,9 @@ When a pane or a session starts waiting for you, or an agent finishes, tubas tel
 
 ### Model, permissions, escalation
 
-- **Model and effort** are per agent. A change applies from the agent's next turn.
+- **Provider, model and effort** are per agent. A change applies from the agent's next turn.
 - **Permissions** (agents › `p`): every agent × every connector, `space` cycles none · read · write. Writes always wait for your `y`; an agent's own workspace is free.
-- **Escalation**: an agent on a cheap model can ask a stronger one for the hard step, then go on. When the same tool fails twice the advice comes with the second failure (`tool_fails`); a write gets a review you see before you approve (`before_write`); or the agent calls `ask_senior` (`ask`). The senior gets a summary of the task's calls and errors, not the whole conversation, answers in a few lines, and shows in the chat as `↑ opus · $0.011: …`. Capped per agent and day.
+- **Escalation**: an agent on a cheap model can ask a stronger one for the hard step, then go on. When the same tool fails twice the advice comes with the second failure (`tool_fails`); a command or a write gets a review you see before you approve (`before_write`); or the agent calls `ask_senior` (`ask`). The senior runs on the agent's provider, gets a summary of the task's calls and errors (not the whole conversation), answers in a few lines, and shows in the chat as `↑ opus · $0.011: …`. Capped per agent and day.
 
 ```yaml
 model: haiku
@@ -422,15 +448,13 @@ When an agent does the same work (the same tools, in the same order) successfull
 
 Every step of an agent resends the whole conversation, so tubas keeps both the conversation and the number of steps small. Inspired by [agentes.chat](https://github.com/agentes-chat/agentes-chat/tree/main/docs/adr) (ADRs 0043, 0050, 0051):
 
-- **A lean, stable base.** Agents run without Claude Code's own prompt and tools, and the system prompt and tool list never change during a session, so later steps read them from the cache (about a tenth of the price).
+- **A lean, stable base.** The system prompt and tool list never change during a conversation, and each request asks for the prompt cache, so later steps read them for a fraction of the price.
 - **What a tool needs, in its description.** The SQLite connector puts the schema in `run_sql`'s description, so agents skip the discovery steps.
-- **Few steps.** Agents are asked to call independent tools together in one step.
-- **Small results.** A query returns at most 30 rows and 4,000 characters, with a note to aggregate or filter.
-- **Short history.** Each turn leaves at most 800 characters for the next agents.
+- **Few steps.** Agents are asked to call independent tools together in one step, and reads in the same step run at the same time.
+- **Small results.** A query returns at most 30 rows and 4,000 characters, with a note to aggregate or filter; a command's output keeps its start and its end.
+- **Compaction.** A conversation past `token_limit` is summarized, and the next requests start from the summary.
 - **Less thinking where it matters less.** Agents working in parallel, or that may pass, run with `effort: low` unless their file says otherwise.
 - **Honest numbers.** The screen shows tokens, the share read from cache and the cost: `34.9k tok · 58% cached · $0.005`.
-
-Measured on the same question and model (haiku), one Iris turn went from 8 model calls, 23 tool calls, 57.8k tokens and US$ 0.0066 to 5 calls, 11–13 tool calls, about 35k tokens and US$ 0.004–0.005.
 
 ## Command line
 
@@ -446,20 +470,20 @@ Everything the window does, scripts and other agents can do too. Every command t
 | `tubas -engine fake` | scripted agents, no model calls |
 | `tubas -local` | everything in this window, without the background server |
 | `tubas -mouse=false` | leaves the mouse to your terminal |
-| `tubas init DIR` | creates a new team to start from (a researcher and a reviewer) |
+| `tubas init DIR` | creates a new team to start from |
 | `tubas seed` | recreates the team's example databases |
 | `tubas status [-json]` | what runs and what waits for you: sessions, panes, routines |
-| `tubas session new [-agent A] "question"` | starts a session (JSON back) |
+| `tubas session new [-agent A] [-in CONVERSATION] "question"` | starts a session, or a follow-up in a conversation (JSON back) |
 | `tubas wait ID [-until blocked,done] [-timeout 10m]` | waits for a session's state |
 | `tubas read ID [-last]` | a session's events, or only its conclusion |
-| `tubas answer APPROVAL-ID yes\|no` | answers an approval (`tubas status -json` lists them) |
+| `tubas answer APPROVAL-ID yes\|no` | answers an approval (`tubas status -json` lists them under `pending`) |
 | `tubas pane new [-repo api [-worktree]] [-title T] [-- command ...]` | opens a pane (JSON back, with its id) |
 | `tubas pane send ID "text" [-enter] [-key ctrl+c]` | types into a pane |
 | `tubas pane wait ID [-until blocked,idle,done]` | waits for a pane's state |
 | `tubas pane read ID` | a pane's screen as text (`-color` keeps the colors) |
 | `tubas pane list [-json]`, `tubas pane close ID` | lists, closes |
 | `tubas stop` | stops the server and every session and pane (panes come back with it) |
-| `tubas doctor` | checks Claude Code, your settings, the token script, the gateway and one real answer, step by step |
+| `tubas doctor` | checks keys, your Claude settings and gateway, one real answer per provider, the shell, step by step |
 
 ## How it works
 
@@ -468,42 +492,32 @@ Everything the window does, scripts and other agents can do too. Every command t
                      │ @agent question                     ▲ y / n
                      ▼                                     │
  ┌──────────── tubas window (Bubble Tea) ──────────────────┴───┐
- │ chat · inbox · sections · panes · sidebar                   │
+ │ chat · inbox · sections · panes · sidebar · /connect        │
  └─────────────────────────────┬───────────────────────────────┘
                                │ HTTP on 127.0.0.1 (token)
  ┌──────────── tubas server, one per team ─────────────────────┐
  │ sessions (engine.Run) · routines · panes (ConPTY + emulator)│
- └──────────────┬──────────────────────────────────────────────┘
-                │ one agent turn = one process
-                ▼
-     claude -p  --system-prompt <agent file + protocol>
-                --tools ""  --mcp-config <tubas gateway>
-                │ JSON-RPC over stdio
-                ▼
-     tubas mcp  the gateway: only this agent's tools
-         │      writes ──▶ approval broker ──▶ your y / n
-         ├── built in: sqlite (read-only), reports, workspace, team, skills
-         └── any MCP server from team.yaml (started as a child)
+ │                                                             │
+ │ one agent turn = the native loop (engine.NativeEngine)      │
+ │   ├── internal/llm: Anthropic Messages or OpenAI chat,      │
+ │   │   streaming, retries, thinking, cache                   │
+ │   ├── internal/tools: read write edit glob grep bash        │
+ │   │   todo_write web_fetch, in the turn ──▶ your y / n      │
+ │   ├── internal/thread: the agent's history, compaction      │
+ │   └── tubas mcp, the gateway: only this agent's connectors  │
+ │         writes ──▶ approval broker ──▶ your y / n           │
+ │         ├── built in: sqlite, reports, workspace, team,     │
+ │         │   skills                                          │
+ │         └── any MCP server from team.yaml                   │
+ └─────────────────────────────────────────────────────────────┘
 ```
 
-- **Orchestrator vs harness.** Claude Code is the harness: it runs the agent loop. tubas is the orchestrator: it decides who runs next, with which instructions and tools, and shows what happens.
-- **Turns are stateless.** Each agent gets the original question, a summary of each previous turn and the note it was handed. Contexts stay small and focused.
+- **Harness and orchestrator.** tubas is both: it runs each agent's loop (the harness), and decides who runs next, with which instructions and tools, and shows what happens (the orchestrator).
+- **Each agent remembers.** An agent's history in a conversation is its own file; a follow-up continues it, with what the others said since. Inside a session, a handoff carries the question, a summary of each previous turn and the note it was handed.
 - **Handoff protocol.** An agent passes the work on by ending its answer with `HANDOFF @name: what you need`. tubas checks the name against the agent's `can_call`; anything else is refused and shown as ✗. Sessions stop at the team's hop limit.
 - **Parallel work.** Several `HANDOFF` lines fan out: those agents run at the same time, each in its own goroutine, and answer back. The caller then concludes with all their answers. This is the orchestrator-workers pattern, live on screen.
-- **Follow-ups.** Ask again after a session and the earlier questions and conclusions go to the agents as context. Each conversation is saved under `.tubas/history/`, and `-resume` reopens the last one.
-- **The gateway.** Agents have no built-in tools (no shell, no file edits) unless they have access to a repository: read gives them claude's Read, Grep and Glob there, write adds edits and shell commands in their worktree, each command waiting for you. Their tools come from `tubas mcp`, which starts the team's connectors, lists only what the agent's access allows and holds every write until you approve it. Permissions live in code, not in the prompt.
-- **Isolation.** Agents run with `--setting-sources ""`: your own CLAUDE.md, hooks and settings never reach them.
-
-### Your AI provider
-
-A work setup usually names the provider in the `env` block of `~/.claude/settings.json` (a company gateway in `ANTHROPIC_BASE_URL`, Bedrock, Vertex, a proxy or CA certificate, a script that fetches the token). Isolation would drop it, so tubas reads your user settings and the team folder's `.claude/settings.json` and `settings.local.json` itself, the way [tucano](https://github.com/eduwxyz/tucano) does, and hands the agents the whole `env` block. The header says which one is in use: `claude · gateway llm.example.com`. Nothing to configure in tubas: it picks your company's setup up on its own.
-
-- **A token from a script.** When your settings fetch the key with an `apiKeyHelper`, claude gets it with `--settings`: it runs the script, sends the key, and runs it again when the gateway says 401. The api harness runs it itself (in sh, or Git Bash on Windows) and reuses the token for 5 minutes, or `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`.
-- **Your gateway's headers and model names.** `ANTHROPIC_CUSTOM_HEADERS` and `ANTHROPIC_DEFAULT_SONNET_MODEL` (and the opus and haiku ones) are passed on, so `model: sonnet` means whatever your gateway calls it. tubas also asks the gateway which models it serves (`/v1/models`, then `/models`), as tucano does: `/model` lists them all, next to the short names your settings map (`sonnet → acme-claude-sonnet`); a short name your settings don't map is left out, since the gateway would not know it. When the list can't be fetched, `/model` says why, and you can still type a model name.
-- **Quiet behind a gateway.** Claude Code's telemetry and error reports are off (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`): company networks often block them.
-- **Your setup, not someone else's session.** When tubas itself runs inside a Claude Code session (the desktop app, its terminal), the variables of that session stay out of the agents, so they use your provider, not that session's login.
-- **CLIs where installers put them.** `~/.local/bin`, `%APPDATA%\npm` and the like are searched, and on Linux and macOS the PATH of your login shell, so claude, codex or opencode are found even when tubas starts without your shell.
-- **No Claude Code installed?** With a gateway (or a key) in your Claude settings, agents whose harness is `claude` run on tubas's own loop instead, straight on that gateway's Anthropic-compatible endpoint, with the same token, headers and model names. The header then says `api · gateway llm.example.com`. Bedrock and Vertex still need Claude Code, and so does escalation to a senior model.
+- **Permissions live in code, not in the prompt.** The tools check every path against the agent's folders, the gateway lists only what its access allows, and every write and command waits for you.
+- **Isolation.** Agents see only their instructions, the team and the tools tubas gives them: your own CLAUDE.md, hooks and settings never reach them.
 
 ### Packages
 
@@ -511,16 +525,20 @@ A work setup usually names the provider in the `env` block of `~/.claude/setting
 | --- | --- |
 | `internal/agent` | reads, validates and saves the agent files |
 | `internal/team` | reads `team.yaml`, checks agents against the connectors, saves settings |
-| `internal/engine` | the `Engine` interface, `Run` (handoffs, hop limit), the harnesses (claude, codex, ACP, api, fake), model providers, the approval broker, detection |
-| `internal/mcp` | the gateway: built-in tools, the client for external MCP servers, permissions, approvals, escalation |
+| `internal/engine` | the `Engine` interface, `Run` (handoffs, hop limit), the native loop, the router, escalation, providers, the approval broker, detection |
+| `internal/llm` | the two wire formats (Anthropic's Messages API through the official SDK, OpenAI's chat completions), streaming, retries, the model table |
+| `internal/tools` | the harness's own tools: files, search, the shell, the checklist, the web |
+| `internal/thread` | each agent's history per conversation, append-only, and compaction |
+| `internal/auth` | the keys you save with `/connect`: the system's keychain, or a file only you can read |
+| `internal/mcp` | the gateway: built-in tools, the client for external MCP servers, approvals, escalation |
 | `internal/server` | the background server: sessions, routines, panes, notifications, its HTTP API and client |
-| `internal/pane` | terminal panes: a pseudo-terminal per program, a terminal emulator for its screen, the state read from it, restore |
+| `internal/pane` | terminal panes: a pseudo-terminal per program, a terminal emulator for its screen, its state, restore |
 | `internal/repo` | git worktrees per task: create, diff, merge, push, discard |
 | `internal/routine` | `routines.yaml`, schedules and saved runs |
 | `internal/skill` | skills: the SKILL.md format, the learning tracker |
 | `internal/notify` | desktop notifications |
 | `internal/data` | the built-in SQLite connector and the synthetic delivery data |
-| `internal/ui` | the window: chat, sections, forms, panes, sidebar, mouse |
+| `internal/ui` | the window: chat, sections, forms, `/connect`, panes, sidebar, mouse |
 
 ## Development
 
@@ -538,13 +556,15 @@ tubas -team examples/dados -engine fake -snapshot 128x32 -ask "@iris por que os 
 
 ## Roadmap
 
-- [x] Agent files, the chat, handoffs checked against `can_call`, the real engine on `claude -p`
+- [x] Agent files, the chat, handoffs checked against `can_call`
 - [x] The MCP gateway: permissions, approvals, any MCP server as a connector, general teams
 - [x] Parallel handoffs, follow-ups, saved conversations, the router, `@todos`, a workspace per agent
 - [x] Token savings, cost on screen
-- [x] One app in seven sections: inbox, forms, permissions, routines, learned skills, escalation, the lead proposing agents and routines, AI providers from your Claude settings
+- [x] One app in seven sections: inbox, forms, permissions, routines, learned skills, escalation, the lead proposing agents and routines
 - [x] The background server: detach and attach, sessions in parallel with states, routines with the window closed, the command line
 - [x] Repositories as connectors, a worktree per task, review and merge
-- [x] Panes for any agent CLI, with workspaces, tabs, a sidebar, the mouse, copy mode, per-agent states, notifications, and panes back after a restart
-- [x] Agents on any harness and provider: Claude Code, Codex, ACP agents, tubas's own loop on an API; DeepSeek, GLM, Kimi, Qwen, OpenRouter, Ollama
-- [ ] Remote (HTTP) MCP servers, remote machines over SSH
+- [x] Terminal panes with workspaces, tabs, a sidebar, the mouse, copy mode, states, notifications, and panes back after a restart
+- [x] tubas as its own harness: streaming, retries, its own tools, a history per agent with compaction, `/connect`, any provider
+- [ ] Web search (Anthropic's server tool, or a search key) and a browser agents can drive
+- [ ] Commands in the background, reading images
+- [ ] Remote machines over SSH

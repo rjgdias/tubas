@@ -41,6 +41,7 @@ var baseCommands = []command{
 	{name: "copy", desc: "copy the last answer"},
 	{name: "export", desc: "save this conversation as a Markdown file"},
 	{name: "model", desc: "change the model · /model haiku sets it at once"},
+	{name: "connect", aliases: []string{"login"}, desc: "connect a model provider: paste its key"},
 	{name: "usage", desc: "tokens and cost of this conversation"},
 	{name: "doctor", desc: "check how agents reach a model"},
 	{name: "mcp", desc: "MCP servers · add yours from Claude Code"},
@@ -204,6 +205,8 @@ func (m Model) runCommand(name, arg string) (Model, tea.Cmd) {
 		return m, copyText(text)
 	case "export":
 		return m.export(arg), nil
+	case "connect":
+		return m.openConnect(false), nil
 	case "model":
 		if arg != "" {
 			return m.setModel(m.pickerAgent(), arg), nil

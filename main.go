@@ -80,7 +80,7 @@ func main() {
 	}
 
 	teamDir := flag.String("team", ".", "the team folder (with team.yaml and agents/)")
-	engineName := flag.String("engine", "claude", "who runs the agents: claude or fake")
+	engineName := flag.String("engine", "native", "who runs the agents: native or fake")
 	model := flag.String("model", "", "use this model for every agent (e.g. haiku), ignoring their files")
 	ask := flag.String("ask", "", `start right away with a question, e.g. -ask "@iris ..."`)
 	snapshot := flag.String("snapshot", "", "print one frame at WIDTHxHEIGHT (e.g. 128x32) and exit")
@@ -106,11 +106,9 @@ func main() {
 		Connectors: t.ConnectorNames(), Routing: t.Routing, Router: router,
 		TeamDir: t.Dir, ReportsDir: reportsDir(t), ConnectorKinds: connectorKinds(t), Repos: repoSpecs(t)}
 	cfg.WorkDir, _ = os.Getwd()
-	if by, ok := eng.(engine.ByHarness); ok {
-		cfg.Harnesses = by.Names()
-	}
 	cfg.Providers = map[string][]string{}
-	for name, spec := range teamProviders(t) {
+	cfg.ProviderSpecs = mcp.TeamProviders(t)
+	for name, spec := range cfg.ProviderSpecs {
 		cfg.Providers[name] = spec.Models
 	}
 	cfg.Notify = t.Notify
@@ -118,7 +116,7 @@ func main() {
 	// Sessions and routines live in a background server, so closing this
 	// window (or ctrl+b q) leaves them running. -local, the fake engine and
 	// snapshots keep everything in this process.
-	if !*local && *snapshot == "" && *engineName == "claude" {
+	if !*local && *snapshot == "" && (*engineName == "native" || *engineName == "claude") {
 		exe, _ := os.Executable()
 		var serveArgs []string
 		if *model != "" {
@@ -140,7 +138,6 @@ func main() {
 			cfg.Panes = cfg.Remote.Panes()
 		} else {
 			localPanes := pane.NewManager(t.Dir)
-			localPanes.Resolve = server.Resolve
 			cfg.Panes = localPanes
 			defer localPanes.CloseAll()
 		}
@@ -267,98 +264,35 @@ func reportsDir(t team.Team) string {
 	return ""
 }
 
-// claudeEngine wires the real engine: the approval broker and the tool
-// gateway each agent gets.
-func claudeEngine(t team.Team, model string) (engine.ClaudeEngine, func(), error) {
-	// Without Claude Code installed, command stays "" and claude agents
-	// run on the api harness, through your Claude settings (see harnesses).
-	command, _ := engine.FindClaude()
-	exe, err := os.Executable() // claude will start this same binary as `tubas mcp`
+// nativeEngine wires tubas's own harness: the approval broker, the
+// gateway for the team's connectors, your providers and keys.
+func nativeEngine(t team.Team, model string) (engine.NativeEngine, func(), error) {
+	exe, err := os.Executable() // the gateway is this same binary: tubas mcp
 	if err != nil {
-		return engine.ClaudeEngine{}, nil, err
+		return engine.NativeEngine{}, nil, err
 	}
 	broker, err := engine.NewBroker()
 	if err != nil {
-		return engine.ClaudeEngine{}, nil, err
+		return engine.NativeEngine{}, nil, err
 	}
-	provider := engine.FindProvider(t.Dir) // a work gateway, Bedrock or Vertex set in your Claude settings
-	plan := false
-	if command != "" {
-		_, plan, _ = engine.ClaudeAuth(command)
-	}
-	return engine.ClaudeEngine{
-		Command:         command,
-		Model:           model,
-		WorkDir:         t.Dir, // agents run inside the team folder
-		Tools:           mcp.ClaudeTools(exe, t.Dir, broker.URL, broker.Token),
-		Approvals:       broker,
-		Provider:        provider,
-		Providers:       teamProviders(t),
-		DefaultProvider: t.Provider,
-		Plan:            plan && provider.Label() == "", // a gateway or Bedrock bills per token
-	}, func() { broker.Close() }, nil
-}
-
-// harnesses are the engines this computer can run, claude first: an
-// agent's harness: field picks one (tucano and t3code do the same:
-// offer what is installed).
-func harnesses(t team.Team, claude engine.ClaudeEngine, model string) engine.ByHarness {
-	byHarness := engine.ByHarness{"claude": claude}
-	exe, _ := os.Executable()
-	gateway := mcp.GatewayLauncher(exe, t.Dir, claude.Approvals.URL, claude.Approvals.Token)
-	if codex, err := engine.FindCodex(); err == nil {
-		_, plan := engine.CodexLogin(codex)
-		byHarness["codex"] = engine.CodexEngine{Command: codex, WorkDir: t.Dir, Gateway: gateway,
-			Approvals: claude.Approvals, Plan: plan, Model: codexModel(model)}
-	}
-	// The api harness needs no program: tubas runs the loop itself.
+	providers := mcp.TeamProviders(t)
 	prices := map[string]engine.Price{}
-	for _, spec := range claude.Providers {
+	for _, spec := range providers {
 		for model, p := range spec.Prices {
 			prices[model] = p
 		}
 	}
-	api := engine.APIEngine{Setup: claude.Provider, Providers: claude.Providers, DefaultProvider: t.Provider, WorkDir: t.Dir,
-		Gateway: gateway, Approvals: claude.Approvals, Prices: prices}
-	byHarness["api"] = api
-	if claude.Command == "" {
-		// No Claude Code here (a work laptop with only a gateway in the
-		// Claude settings, say): claude agents run on tubas's own loop,
-		// through that gateway, unchanged.
-		byHarness["claude"] = api
-	}
-	acp := map[string]string{}
-	for name, h := range t.Harnesses {
-		acp[name] = h.ACP
-	}
-	for _, a := range engine.FindACP(acp) {
-		if _, taken := byHarness[a.Name]; !taken {
-			byHarness[a.Name] = engine.ACPEngine{Agent: a, WorkDir: t.Dir, Gateway: gateway, Approvals: claude.Approvals}
-		}
-	}
-	return byHarness
-}
-
-// codexModel is -model for codex: only when it is not one of Claude's.
-func codexModel(m string) string {
-	switch m {
-	case "", "haiku", "sonnet", "opus":
-		return ""
-	}
-	return m
-}
-
-// teamProviders are the built-in model providers with team.yaml's.
-func teamProviders(t team.Team) map[string]engine.ProviderSpec {
-	own := map[string]engine.ProviderSpec{}
-	for name, p := range t.Providers {
-		prices := map[string]engine.Price{}
-		for model, pr := range p.Prices {
-			prices[model] = engine.Price{Input: pr[0], Cached: pr[1], Output: pr[2]}
-		}
-		own[name] = engine.ProviderSpec{Anthropic: p.Anthropic, OpenAI: p.OpenAI, KeyEnv: p.KeyEnv, Models: p.Models, Prices: prices}
-	}
-	return engine.Providers(own)
+	return engine.NativeEngine{
+		Setup:           engine.FindProvider(t.Dir), // a company gateway in your Claude settings
+		Providers:       providers,
+		DefaultProvider: t.Provider,
+		WorkDir:         t.Dir,
+		Gateway:         mcp.GatewayLauncher(exe, t.Dir, broker.URL, broker.Token),
+		Approvals:       broker,
+		Prices:          prices,
+		AllowCommands:   t.AllowCommands,
+		Model:           model,
+	}, func() { broker.Close() }, nil
 }
 
 // runMCP is the tool gateway for one agent turn, started by claude.

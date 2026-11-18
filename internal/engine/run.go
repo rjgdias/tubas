@@ -22,6 +22,14 @@ type Request struct {
 	MaxHops  int
 	Context  string // earlier questions and answers, for follow-ups
 
+	// Conversation is the conversation this session belongs to, and Past
+	// its earlier questions. With Threads (the folder of the
+	// conversations' histories), each agent keeps its whole history there
+	// and a follow-up continues it.
+	Conversation string
+	Past         []Exchange
+	Threads      string
+
 	Lead    string // who answers when nobody else is picked, and who closes a team round
 	Routing string // for questions that name no agent: "lead" (default), "router" or "all"
 	Router  Router // used when Routing is "router"
@@ -59,14 +67,14 @@ func Run(ctx context.Context, eng Engine, req Request, out chan<- Event) {
 
 	hops := 0
 	var history []string
-	current, prompt := targets[0], firstPrompt(req)
+	current, prompt := targets[0], firstPrompt
 	from, note, kind := "you", req.Question, KindAsk
 
 	if len(targets) > 1 { // a round for the team: everyone at once, then the lead closes
 		targets = targets[:min(len(targets), req.MaxHops-1)]
 		hops += len(targets)
 		answers, passed := runParallel(ctx, eng, req, "you", req.Question, KindTeam, handoffsTo(targets, req.Question),
-			func(h Handoff) string { return teamPrompt(req, req.Team[h.To]) }, out)
+			func(r Request, h Handoff) string { return teamPrompt(r, r.Team[h.To]) }, out)
 		if ctx.Err() != nil {
 			return
 		}
@@ -85,7 +93,8 @@ func Run(ctx context.Context, eng Engine, req Request, out chan<- Event) {
 			list = "nobody (everyone passed)"
 		}
 		current, from, note, kind = req.Lead, "", "answers from "+list, KindJoin
-		prompt = teamJoinPrompt(req, history)
+		past := slices.Clone(history)
+		prompt = func(r Request) string { return teamJoinPrompt(r, past) }
 	}
 
 	for {
@@ -120,7 +129,8 @@ func Run(ctx context.Context, eng Engine, req Request, out chan<- Event) {
 				return
 			}
 			current, from, note, kind = h.To, a.Name, h.Note, KindHandoff
-			prompt = handoffPrompt(req, history, a.Name, h.Note)
+			past, by, ask := slices.Clone(history), a.Name, h.Note
+			prompt = func(r Request) string { return handoffPrompt(r, past, by, ask) }
 
 		default: // fan out, then come back to the caller
 			if room := req.MaxHops - hops; len(handoffs) > room {
@@ -141,7 +151,7 @@ func Run(ctx context.Context, eng Engine, req Request, out chan<- Event) {
 			}
 			caller, past := a, slices.Clone(history)
 			answers, _ := runParallel(ctx, eng, req, a.Name, "", KindWorker, handoffs,
-				func(h Handoff) string { return workerPrompt(req, past, caller.Name, h.Note) }, out)
+				func(r Request, h Handoff) string { return workerPrompt(r, past, caller.Name, h.Note) }, out)
 			if ctx.Err() != nil {
 				return
 			}
@@ -154,7 +164,8 @@ func Run(ctx context.Context, eng Engine, req Request, out chan<- Event) {
 			}
 			list := strings.Join(names, " and ")
 			current, from, note, kind = a.Name, "", "answers from "+list, KindJoin
-			prompt = joinPrompt(req, history, list)
+			joined := slices.Clone(history)
+			prompt = func(r Request) string { return joinPrompt(r, joined, list) }
 		}
 	}
 }
@@ -196,7 +207,7 @@ func firstTargets(ctx context.Context, req Request, out chan<- Event) ([]string,
 // runParallel runs several agents at the same time and returns their
 // answers in order, and which of them passed.
 func runParallel(ctx context.Context, eng Engine, req Request, caller, note string, kind TurnKind,
-	handoffs []Handoff, promptFor func(Handoff) string, out chan<- Event) ([]string, []bool) {
+	handoffs []Handoff, promptFor func(Request, Handoff) string, out chan<- Event) ([]string, []bool) {
 	answers := make([]string, len(handoffs))
 	passed := make([]bool, len(handoffs))
 	var wg sync.WaitGroup // waits until every goroutine called Done
@@ -209,7 +220,7 @@ func runParallel(ctx context.Context, eng Engine, req Request, caller, note stri
 			if note != "" {
 				ask = note
 			}
-			body, _, didPass, err := runTurn(ctx, eng, req, w, promptFor(h), caller, ask, kind, out)
+			body, _, didPass, err := runTurn(ctx, eng, req, w, func(r Request) string { return promptFor(r, h) }, caller, ask, kind, out)
 			if err != nil {
 				answers[i] = "(no answer: " + err.Error() + ")"
 				if ctx.Err() == nil { // close the worker's turn on screen
@@ -226,13 +237,18 @@ func runParallel(ctx context.Context, eng Engine, req Request, caller, note stri
 	return answers, passed
 }
 
-// runTurn runs one agent turn and announces its start and end.
-func runTurn(ctx context.Context, eng Engine, req Request, a agent.Agent, prompt, from, note string, kind TurnKind, out chan<- Event) (string, []Handoff, bool, error) {
+// runTurn runs one agent turn and announces its start and end. prompt
+// writes what the agent is told; it is written twice, with the earlier
+// questions and without them, for an agent that remembers them itself.
+func runTurn(ctx context.Context, eng Engine, req Request, a agent.Agent, prompt func(Request) string, from, note string, kind TurnKind, out chan<- Event) (string, []Handoff, bool, error) {
 	if err := send(ctx, out, TurnStarted{a.Name, from, note}); err != nil {
 		return "", nil, false, err
 	}
 	start := time.Now()
-	reply, err := eng.RunTurn(ctx, TurnRequest{Agent: a, Prompt: prompt, Team: req.Team, Kind: kind, Repos: req.Repos, Workspace: req.Workspace}, out)
+	bare := req
+	bare.Context = ""
+	reply, err := eng.RunTurn(ctx, TurnRequest{Agent: a, Prompt: prompt(req), Followup: prompt(bare), Team: req.Team, Kind: kind,
+		Repos: req.Repos, Workspace: req.Workspace, Conversation: req.Conversation, Past: req.Past, Threads: req.Threads}, out)
 	if err != nil {
 		return "", nil, false, err
 	}

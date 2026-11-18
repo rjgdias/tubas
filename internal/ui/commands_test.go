@@ -32,13 +32,13 @@ func TestGatewayListsOnlyMappedShortNames(t *testing.T) {
 	t.Cleanup(m.Stop)
 	m.cfg.Providers = map[string][]string{"anthropic": {"acme-claude-sonnet", "acme-llama-70b"}}
 	m.onGateway, m.aliases = true, map[string]string{"sonnet": "acme-claude-sonnet"}
-	got := m.modelsFor("claude", "anthropic", "")
+	got := m.modelsFor("anthropic", "")
 	want := []string{"sonnet", "acme-claude-sonnet", "acme-llama-70b"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("on a gateway, only the short names your settings map: got %v, want %v", got, want)
 	}
 	m.onGateway = false
-	if got := m.modelsFor("claude", "anthropic", ""); !slices.Contains(got, "opus") {
+	if got := m.modelsFor("anthropic", ""); !slices.Contains(got, "opus") {
 		t.Errorf("on Anthropic itself, every short name: %v", got)
 	}
 }

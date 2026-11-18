@@ -8,24 +8,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"tubas/internal/tools"
 )
 
-// Agents run with --setting-sources "", so Claude Code skips your
-// settings files: no hooks, no CLAUDE.md, no plugins, no permissions.
-// That also drops the "env" block of those files, which is where a work
-// setup usually says which AI provider to use (a company gateway in
-// ANTHROPIC_BASE_URL, Bedrock, Vertex, a proxy, a CA certificate). And
-// --settings does not bring it back in that mode.
-//
-// So tubas reads those files itself and passes on only the variables
-// that choose and reach the provider, through the process environment.
-// Everything else in your settings stays out of the agents.
+// Your Claude settings (~/.claude/settings.json and the project's) are
+// where a work setup says how to reach the model: a company gateway in
+// ANTHROPIC_BASE_URL, its token or apiKeyHelper, custom headers, model
+// names. tubas reads those files itself and uses only the variables that
+// choose and reach the provider.
 
 // Provider is how agents reach the model, as your Claude settings say.
 type Provider struct {
@@ -65,84 +60,6 @@ func (p Provider) Label() string {
 		return "gateway"
 	}
 	return ""
-}
-
-// Environ is the environment for a claude process: this process's own,
-// with the provider's variables on top (your settings win, as they do
-// when you run claude yourself). Two things more, as tucano does:
-//
-//   - what marks this process as running inside a Claude Code session
-//     (the desktop app, say) stays out: it would make the agent use that
-//     session's login instead of your provider;
-//   - behind a gateway, Claude Code's own telemetry and error reports are
-//     off: company gateways often block them, and the turn would wait.
-func (p Provider) Environ() []string {
-	quiet := map[string]string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
-	if p.Get("ANTHROPIC_BASE_URL") != "" {
-		quiet["DISABLE_TELEMETRY"], quiet["DISABLE_ERROR_REPORTING"] = "1", "1"
-	}
-	env := make([]string, 0, len(os.Environ())+len(p.Env)+len(quiet))
-	set := map[string]bool{}
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		if _, replaced := p.Env[k]; replaced || hostSessionVar(k) {
-			continue
-		}
-		env = append(env, kv)
-		set[strings.ToUpper(k)] = true
-	}
-	keys := make([]string, 0, len(p.Env))
-	for k := range p.Env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if p.Env[k] == "" {
-			continue // an empty value removes the variable
-		}
-		env = append(env, k+"="+p.Env[k])
-		set[strings.ToUpper(k)] = true
-	}
-	for k, v := range quiet {
-		if !set[k] { // yours win
-			env = append(env, k+"="+v)
-		}
-	}
-	return env
-}
-
-// hostSessionVar says whether a variable belongs to a Claude Code session
-// this process runs inside (ids, sockets, tokens, the entry point), not to
-// your setup. Your own CLAUDE_CODE_ settings (USE_BEDROCK, SKIP_*, client
-// certificates, timeouts…) are kept.
-func hostSessionVar(name string) bool {
-	upper := strings.ToUpper(name)
-	switch {
-	case upper == "CLAUDECODE", upper == "CLAUDE_PID", upper == "CLAUDE_EFFORT",
-		strings.HasPrefix(upper, "CLAUDE_AGENT_SDK_"), strings.HasPrefix(upper, "CLAUDE_PREVIEW_"):
-		return true
-	case strings.HasPrefix(upper, "CLAUDE_CODE_"):
-		for _, keep := range []string{"CLAUDE_CODE_USE_", "CLAUDE_CODE_SKIP_", "CLAUDE_CODE_CLIENT_", "CLAUDE_CODE_GIT_BASH_PATH",
-			"CLAUDE_CODE_API_KEY_HELPER_TTL_MS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_DISABLE_", "CLAUDE_CODE_TMPDIR"} {
-			if strings.HasPrefix(upper, keep) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-// SettingsArgs gives claude your apiKeyHelper, as tucano does: claude
-// runs it, sends the key, and runs it again when the gateway says 401.
-// (--settings works with --setting-sources "" for this; checked against
-// claude 2.1.303.)
-func (p Provider) SettingsArgs() []string {
-	if p.KeyHelper == "" {
-		return nil
-	}
-	data, _ := json.Marshal(map[string]string{"apiKeyHelper": p.KeyHelper})
-	return []string{"--settings", string(data)}
 }
 
 // With is p with other's variables on top.
@@ -185,6 +102,14 @@ var helper struct {
 	sync.Mutex
 	cmd, key string
 	at       time.Time
+}
+
+// forgetHelperKey drops the cached key: the provider refused it, so the
+// next call runs the apiKeyHelper again for a fresh one.
+func forgetHelperKey() {
+	helper.Lock()
+	helper.key = ""
+	helper.Unlock()
 }
 
 func helperKey(command, ttlMS string) (string, error) {
@@ -235,24 +160,7 @@ func RunKeyHelper(command string) (key string, took time.Duration, stderr string
 
 // shellCommand runs a command line the way Claude Code runs hooks and
 // helpers: in sh, or in Git Bash on Windows (PowerShell when there is none).
-func shellCommand(ctx context.Context, line string) *exec.Cmd {
-	if runtime.GOOS != "windows" {
-		return exec.CommandContext(ctx, "/bin/sh", "-c", line)
-	}
-	candidates := []string{os.Getenv("CLAUDE_CODE_GIT_BASH_PATH"), `C:\Program Files\Git\bin\bash.exe`}
-	if git, err := exec.LookPath("git"); err == nil { // Git installed elsewhere: its bash is next to it
-		root := filepath.Dir(filepath.Dir(git)) // …\Git\cmd\git.exe → …\Git
-		candidates = append(candidates, filepath.Join(root, "bin", "bash.exe"), filepath.Join(root, "usr", "bin", "bash.exe"))
-	}
-	for _, bash := range candidates {
-		if bash != "" {
-			if _, err := os.Stat(bash); err == nil {
-				return exec.CommandContext(ctx, bash, "-c", line)
-			}
-		}
-	}
-	return exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", line)
-}
+func shellCommand(ctx context.Context, line string) *exec.Cmd { return tools.ShellCommand(ctx, line) }
 
 // Headers are ANTHROPIC_CUSTOM_HEADERS ("Name: value", one per line).
 func (p Provider) Headers() map[string]string {

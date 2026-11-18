@@ -2,7 +2,6 @@
 name: nico
 role: reviewer
 color: purple
-harness: claude
 model: opus
 tools:
   data: read

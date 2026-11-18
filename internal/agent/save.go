@@ -16,7 +16,6 @@ type header struct {
 	Name       string            `yaml:"name"`
 	Role       string            `yaml:"role,omitempty"`
 	Color      string            `yaml:"color,omitempty"`
-	Harness    string            `yaml:"harness,omitempty"`
 	Provider   string            `yaml:"provider,omitempty"`
 	Model      string            `yaml:"model,omitempty"`
 	Effort     string            `yaml:"effort,omitempty"`
@@ -29,10 +28,7 @@ type header struct {
 
 // Markdown is the whole agent file: the header and the instructions.
 func (a Agent) Markdown() string {
-	h := header{a.Name, a.Role, a.Color, a.Harness, a.Provider, a.Model, a.Effort, nil, a.CanCall, a.TokenLimit, a.Skills, a.Escalate}
-	if h.Harness == "claude" {
-		h.Harness = "" // the default
-	}
+	h := header{a.Name, a.Role, a.Color, a.Provider, a.Model, a.Effort, nil, a.CanCall, a.TokenLimit, a.Skills, a.Escalate}
 	if h.TokenLimit == 50000 {
 		h.TokenLimit = 0
 	}

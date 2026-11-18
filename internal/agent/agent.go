@@ -3,7 +3,7 @@
 // instructions.
 //
 // Remember: an agent is not a program. It is just a configuration that
-// the harness uses to run the model.
+// tubas uses to run the model.
 package agent
 
 import (
@@ -28,7 +28,7 @@ type Agent struct {
 	Name       string            `yaml:"name"`
 	Role       string            `yaml:"role"`
 	Color      string            `yaml:"color"`
-	Harness    string            `yaml:"harness"`  // what runs it: claude, codex, api, or an ACP agent (opencode, gemini…)
+	Harness    string            `yaml:"harness"`  // read and ignored: tubas runs every agent itself (files from before have it)
 	Provider   string            `yaml:"provider"` // where the model is served: anthropic (default), deepseek, glm, kimi, qwen…
 	Model      string            `yaml:"model"`
 	Effort     string            `yaml:"effort"` // how hard the model thinks: low, medium, high ("" = its default)
@@ -79,7 +79,7 @@ func (e Escalation) Limit() int {
 // Accepted values. A map with struct{} values is the Go way to build a
 // "set": all that matters is whether the key exists.
 var (
-	validName     = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,30}$`) // harness and provider names
+	validName     = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,30}$`) // provider names
 	validAccess   = map[string]struct{}{"none": {}, "read": {}, "write": {}}
 	validEffort   = map[string]struct{}{"": {}, "low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {}}
 	validTriggers = map[string]struct{}{"tool_fails": {}, "before_write": {}, "ask": {}}
@@ -120,9 +120,6 @@ func Parse(content string) (Agent, error) {
 
 // applyDefaults fills empty fields with sensible values.
 func applyDefaults(a *Agent) {
-	if a.Harness == "" {
-		a.Harness = "claude"
-	}
 	if a.Model == "" {
 		a.Model = "sonnet"
 	}
@@ -150,11 +147,8 @@ func validate(a Agent) error {
 	if a.Instructions == "" {
 		return fmt.Errorf("agent %s has no instructions after the header", a.Name)
 	}
-	// Which harnesses and providers exist depends on this computer and the
-	// team, so the engine checks that when the agent runs.
-	if !validName.MatchString(a.Harness) {
-		return fmt.Errorf("agent %s: harness %q (use claude, codex, api, or an ACP agent like opencode)", a.Name, a.Harness)
-	}
+	// Which providers exist depends on this computer and the team, so the
+	// engine checks that when the agent runs.
 	if a.Provider != "" && !validName.MatchString(a.Provider) {
 		return fmt.Errorf("agent %s: provider %q (use lowercase, like deepseek)", a.Name, a.Provider)
 	}

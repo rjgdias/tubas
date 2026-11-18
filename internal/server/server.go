@@ -24,6 +24,7 @@ import (
 	"tubas/internal/repo"
 	"tubas/internal/routine"
 	"tubas/internal/team"
+	"tubas/internal/thread"
 )
 
 // States, the same everywhere (screen, status, wait):
@@ -172,9 +173,6 @@ func New(opt Options) *Server {
 	s := &Server{opt: opt, started: time.Now(), sessions: map[string]*session{}, changed: make(chan struct{}),
 		lastStart: map[string]time.Time{}, retryAt: map[string]time.Time{}, done: make(chan struct{})}
 	s.panes = pane.NewManager(opt.TeamDir)
-	s.panes.Resolve = Resolve
-	home, _ := os.UserHomeDir()
-	s.panes.Detectors = pane.LoadDetectors(filepath.Join(home, ".tubas", "detect"), filepath.Join(opt.TeamDir, "detect"))
 	s.states = map[string]string{}
 	s.Notifier = func(title, body string) { notify.Send(title, body) }
 	s.loadSaved()
@@ -260,14 +258,15 @@ func (s *Server) start(req StartRequest, kind, routineName string, retry bool) (
 	}
 	repos, specs := repoSpecs(t)
 	ss.code = repo.NewSet(t.Dir, ss.ID, title, specs)
+	past := s.pastOf(ss.Conversation)
 	s.sessions[ss.ID] = ss
 	s.notify()
 	info := ss.info()
 	s.mu.Unlock()
 
 	go engine.Run(ctx, s.opt.Engine, engine.Request{Team: members, Target: req.Target, Everyone: req.Everyone,
-		Question: req.Question, MaxHops: t.MaxHops, Context: req.Context, Lead: t.Lead, Routing: routing, Router: s.opt.Router,
-		Repos: repos, Workspace: ss.code.Workspace}, events)
+		Question: req.Question, MaxHops: t.MaxHops, Context: orContext(req.Context, past), Lead: t.Lead, Routing: routing, Router: s.opt.Router,
+		Repos: repos, Workspace: ss.code.Workspace, Conversation: ss.Conversation, Past: past, Threads: s.threads()}, events)
 	s.pumps.Add(1)
 	go s.pump(ss, events)
 	return info, nil
@@ -386,7 +385,43 @@ func (s *Server) DeleteConversation(id string) (int, error) {
 	for _, sid := range gone {
 		os.Remove(filepath.Join(s.dir(), "sessions", sid+".json"))
 	}
+	if thread.Valid(id) { // the agents' histories in it
+		os.RemoveAll(filepath.Join(s.threads(), id))
+	}
 	return len(gone), nil
+}
+
+// threads is where each agent's history in each conversation is kept.
+func (s *Server) threads() string { return filepath.Join(s.dir(), "conversations") }
+
+// pastOf is a conversation's earlier questions and how each ended, oldest
+// first. Call with s.mu held.
+func (s *Server) pastOf(conversation string) []engine.Exchange {
+	var earlier []*session
+	for _, ss := range s.sessions {
+		conv := ss.Conversation
+		if conv == "" {
+			conv = ss.ID
+		}
+		if conv == conversation && ss.Kind != "routine" && !ss.running {
+			earlier = append(earlier, ss)
+		}
+	}
+	sort.Slice(earlier, func(i, j int) bool { return earlier[i].Created.Before(earlier[j].Created) })
+	past := make([]engine.Exchange, 0, len(earlier))
+	for _, ss := range earlier {
+		past = append(past, engine.Exchange{Target: ss.Target, Question: ss.Question, Agent: ss.Agent, Answer: ss.Summary, Ended: ss.Updated})
+	}
+	return past
+}
+
+// orContext keeps the screen's summary of the earlier questions, or
+// writes one from the server's own record.
+func orContext(given string, past []engine.Exchange) string {
+	if given != "" {
+		return given
+	}
+	return engine.PastContext(past)
 }
 
 // RenameConversation gives a conversation a title of your choosing: every
@@ -744,6 +779,11 @@ func (s *Server) Run(ctx context.Context) error {
 	srv := &http.Server{Handler: s.Handler()}
 	f := File{URL: "http://" + ln.Addr().String(), Token: s.token, PID: os.Getpid(), Started: s.started, Build: Build()}
 	os.MkdirAll(s.dir(), 0o755)
+	// What tubas keeps here (the agents' histories, sessions, worktrees)
+	// never goes into git, even when the team folder lives in a repo.
+	if ignore := filepath.Join(s.dir(), ".gitignore"); !exists(ignore) {
+		os.WriteFile(ignore, []byte("# written by tubas: nothing in .tubas goes into git\n*\n"), 0o644)
+	}
 	data, _ := json.Marshal(f)
 	if err := os.WriteFile(FilePath(s.opt.TeamDir), data, 0o600); err != nil {
 		return err
@@ -943,3 +983,6 @@ func shortTitle(q string) string {
 	}
 	return t
 }
+
+// exists says whether a file is there.
+func exists(path string) bool { _, err := os.Stat(path); return err == nil }

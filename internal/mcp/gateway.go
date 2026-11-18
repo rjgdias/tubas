@@ -8,9 +8,9 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+	"tubas/internal/engine"
 
 	"tubas/internal/team"
 )
@@ -26,7 +26,7 @@ type Gateway struct {
 	approvalToken string
 	tools         []tool // already filtered by access and named connector__tool
 	clients       []*client
-	senior        *senior // nil unless the agent escalates
+	senior        *engine.Senior // nil unless the agent escalates
 }
 
 // NewGateway gathers the agent's tools from the team's connectors.
@@ -83,35 +83,10 @@ func NewGateway(t team.Team, agentName, approvalURL, approvalToken string) (*Gat
 			g.tools = append(g.tools, tl)
 		}
 	}
-	if dirs := os.Getenv("TUBAS_WRITE_DIRS"); dirs != "" {
-		// claude asks tubas before its own shell and edits (permission);
-		// other harnesses run with their shell off and get run_command.
-		if h := os.Getenv("TUBAS_HARNESS"); h == "" || h == "claude" {
-			g.tools = append(g.tools, g.permissionTool(filepath.SplitList(dirs)))
-		} else {
-			tl := g.shellTool(filepath.SplitList(dirs))
-			tl.name = "code__" + tl.name
-			g.tools = append(g.tools, tl)
-		}
-	}
-	// The api harness has no file tools of its own: the gateway's.
-	if os.Getenv("TUBAS_HARNESS") == "api" {
-		var read, write []string
-		if v := os.Getenv("TUBAS_READ_DIRS"); v != "" {
-			read = filepath.SplitList(v)
-		}
-		if v := os.Getenv("TUBAS_WRITE_DIRS"); v != "" {
-			write = filepath.SplitList(v)
-		}
-		if len(read)+len(write) > 0 {
-			for _, tl := range codeTools(read, write) {
-				tl.name = "code__" + tl.name
-				g.tools = append(g.tools, tl)
-			}
-		}
-	}
-	if g.senior = newSenior(a, t.Dir); g.senior != nil && g.senior.cfg.Has("ask") {
-		tl := g.senior.askTool()
+	// Files, search and the shell are tubas's own tools, in the turn: the
+	// gateway is only for the team's connectors and the senior.
+	if g.senior = newSenior(a, t); g.senior.Has("ask") {
+		tl := askTool(g.senior)
 		tl.name = "escalate__" + tl.name
 		g.tools = append(g.tools, tl)
 	}
@@ -240,8 +215,8 @@ func (g *Gateway) call(params json.RawMessage) any {
 		if !t.readOnly && !t.noApproval {
 			// The tool writes: nothing runs until a human says yes.
 			detail := prettyArgs(p.Arguments)
-			if g.senior != nil && g.senior.cfg.Has("before_write") {
-				detail += "\n\n" + g.senior.ask("Review this write before a human approves it. Is it right? "+
+			if g.senior.Has("before_write") {
+				detail += "\n\n" + g.senior.Ask("Review this write before a human approves it. Is it right? "+
 					"Start with OK or CONCERN, then say why in a line.\n"+p.Name+"\n"+detail)
 			}
 			approved, reason, err := g.askApproval(desc, detail)
@@ -261,9 +236,9 @@ func (g *Gateway) call(params json.RawMessage) any {
 		}
 		if g.senior != nil && !strings.HasPrefix(p.Name, "escalate__") {
 			text, failed := resultText(result)
-			g.senior.note(desc, text, failed)
-			if failed && g.senior.failed(p.Name) {
-				result = withNote(result, g.senior.ask("The tool "+p.Name+" failed twice in this task. Last error:\n"+clip(text, 1500)))
+			g.senior.Note(desc, text, failed)
+			if failed && g.senior.Failed(p.Name) {
+				result = withNote(result, g.senior.Ask("The tool "+p.Name+" failed twice in this task. Last error:\n"+clip(text, 1500)))
 			}
 		}
 		return result

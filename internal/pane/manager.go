@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,11 +38,7 @@ type Host interface {
 // Manager keeps a team's panes.
 type Manager struct {
 	TeamDir string
-	Resolve func(name string) string // finds a program ("claude" -> its path)
-	Env     []string                 // added to every pane's environment
-
-	// Detectors read agents' screens (see detect.go).
-	Detectors []Detector
+	Env     []string // added to every pane's environment
 
 	mu       sync.Mutex
 	panes    map[string]*Pane
@@ -58,7 +53,7 @@ var _ Host = (*Manager)(nil)
 
 // NewManager makes an empty manager.
 func NewManager(teamDir string) *Manager {
-	return &Manager{TeamDir: teamDir, panes: map[string]*Pane{}, specs: map[string]Spec{}, Detectors: Detectors}
+	return &Manager{TeamDir: teamDir, panes: map[string]*Pane{}, specs: map[string]Spec{}}
 }
 
 // Open starts a program in a new pane.
@@ -95,7 +90,7 @@ func (m *Manager) Open(spec Spec, w, h int) (Info, error) {
 func (m *Manager) launch(id string, spec Spec, args []string, w, h int, wt *repo.Worktree) (Info, error) {
 	run := spec
 	run.Args = args
-	p, err := start(id, run, w, h, m.Resolve, m.Env, m.Detectors)
+	p, err := start(id, run, w, h, m.Env)
 	if err != nil {
 		return Info{}, err
 	}
@@ -115,10 +110,8 @@ func (m *Manager) launch(id string, spec Spec, args []string, w, h int, wt *repo
 // ── coming back after a restart ─────────────────────────────────────────
 //
 // The panes and their layout are written to .tubas/panes.json. When the
-// server starts again, Restore starts each program again in its folder;
-// an agent CLI that can continue its last conversation (claude
-// --continue, codex resume --last…) does. A pane you closed, or whose
-// program ended on its own, stays gone.
+// server starts again, Restore starts each program again in its folder.
+// A pane you closed, or whose program ended on its own, stays gone.
 
 type savedPane struct {
 	ID       string         `json:"id"`
@@ -189,8 +182,7 @@ func (m *Manager) Restore() (int, []error) {
 			errs = append(errs, fmt.Errorf("%s: its folder is gone (%s)", sp.Title, sp.Spec.Dir))
 			continue
 		}
-		args := ResumeArgs(m.Detectors, sp.Spec.Command, sp.Spec.Args)
-		if _, err := m.launch(sp.ID, sp.Spec, args, sp.W, sp.H, sp.Worktree); err != nil {
+		if _, err := m.launch(sp.ID, sp.Spec, sp.Spec.Args, sp.W, sp.H, sp.Worktree); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", sp.Title, err))
 			continue
 		}
@@ -351,25 +343,6 @@ func Counts(infos []Info) map[string]int {
 	for _, i := range infos {
 		out[i.State]++
 	}
-	return out
-}
-
-// Agents are the agent CLIs found on this computer, for the new pane
-// menu, in a stable order.
-func Agents(resolve func(string) string) []string {
-	var out []string
-	for _, name := range []string{"claude", "codex", "gemini", "aider", "opencode", "goose", "crush"} {
-		if resolve != nil && name == "claude" {
-			if p := resolve(name); p != name {
-				out = append(out, name)
-				continue
-			}
-		}
-		if _, err := lookPath(name); err == nil {
-			out = append(out, name)
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i] == "claude" && out[j] != "claude" })
 	return out
 }
 

@@ -1,8 +1,6 @@
 package pane
 
 import (
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -168,29 +166,6 @@ func waitState(t *testing.T, m *Manager, id, want string, within time.Duration) 
 	}
 }
 
-func TestAgentStartedFromAShellIsRead(t *testing.T) {
-	m := NewManager(t.TempDir())
-	defer m.CloseAll()
-	info, err := m.Open(script(
-		`Start-Sleep 2; Write-Output 'Claude Code v2.1'; Write-Output '* Thinking (esc to interrupt)'; Start-Sleep 4; Clear-Host; Write-Output '? for shortcuts'; Start-Sleep 20`,
-		`sleep 2; echo 'Claude Code v2.1'; echo '* Thinking (esc to interrupt)'; sleep 4; clear; echo '? for shortcuts'; sleep 20`), 60, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.Send(info.ID, []Key{{Text: "fix it"}}) // you ask: what it does next can finish
-	working := waitState(t, m, info.ID, Working, 15*time.Second)
-	if working.Agent != "claude" {
-		t.Errorf("claude's screen should be recognized, agent = %q", working.Agent)
-	}
-	time.Sleep(2 * time.Second) // no output now, but the phrase says it still works
-	if list, _ := m.List(); list[0].State != Working {
-		t.Errorf("esc to interrupt on screen means working, got %s", list[0].State)
-	}
-	waitState(t, m, info.ID, Done, 15*time.Second) // finished, not seen yet
-	m.Seen(info.ID)
-	waitState(t, m, info.ID, Idle, 5*time.Second)
-}
-
 func TestHistoryKeepsWhatScrolledAway(t *testing.T) {
 	m := NewManager(t.TempDir())
 	defer m.CloseAll()
@@ -250,36 +225,10 @@ func TestPanesComeBackAfterARestart(t *testing.T) {
 	third.CloseAll()
 }
 
-func TestResumeArgsAndOverrides(t *testing.T) {
-	if got := ResumeArgs(Detectors, "claude", []string{"--model", "sonnet"}); strings.Join(got, " ") != "--continue --model sonnet" {
-		t.Errorf("claude resumes with --continue: %q", got)
-	}
-	if got := ResumeArgs(Detectors, `C:\bin\codex.exe`, nil); strings.Join(got, " ") != "resume --last" {
-		t.Errorf("codex resumes with resume --last: %q", got)
-	}
-	if got := ResumeArgs(Detectors, "powershell.exe", []string{"-NoLogo"}); len(got) != 1 {
-		t.Errorf("a shell starts as it was: %q", got)
-	}
-	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "claude.yaml"), []byte("name: claude\ncommands: [claude]\nblocked: [\"custom question\"]\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "mine.yaml"), []byte("name: mine\ncommands: [mine]\nworking: [\"busy\"]\n"), 0o644)
-	dets := LoadDetectors(dir)
-	if d := byCommand(dets, "claude"); d == nil || len(d.Blocked) != 1 || d.Blocked[0] != "custom question" {
-		t.Errorf("a file replaces the built-in claude: %+v", d)
-	}
-	if byCommand(dets, "mine") == nil || len(dets) != len(Detectors)+1 {
-		t.Error("a new agent can be added")
-	}
-}
-
 func TestPanesStartClean(t *testing.T) {
 	got := cleanEnv([]string{"PATH=x", "CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=a", "CLAUDE_CODE_MESSAGING_TOKEN=s",
 		"CLAUDE_CODE_USE_BEDROCK=1", "ANTHROPIC_BASE_URL=u"})
 	if strings.Join(got, ",") != "PATH=x,CLAUDE_CODE_USE_BEDROCK=1,ANTHROPIC_BASE_URL=u" {
 		t.Errorf("a pane keeps the provider and drops the session markers: %v", got)
-	}
-	words := []string{`PS E:\code\examples> Get-ChildItem`, "Name    Length", "the crush of the kimono at amplitude"}
-	if d := bySignature(Detectors, words); d != nil {
-		t.Errorf("ordinary words must not look like an agent, got %s", d.Name)
 	}
 }
