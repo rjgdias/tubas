@@ -56,6 +56,9 @@ func (m Model) mouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	cw, bodyH := m.width-2, m.bodyHeight()
 	bx, by := msg.X-bodyX, msg.Y-bodyY
 	if m.form != nil {
+		if m.form.edit != nil && (press || wheel) {
+			return m.mouseEdit(msg, bx, by)
+		}
 		if press {
 			return m.clickForm(msg, bx, by)
 		}

@@ -3,8 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"runtime"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -14,15 +13,15 @@ import (
 
 // A form is how you change anything on screen: an agent, a routine, a
 // skill. It is a list of fields; ↑↓ moves, ←→ picks an option, letters
-// type, enter on a long text opens your editor, ctrl+s saves, esc
-// cancels. Nothing is written until ctrl+s.
+// type, enter on a long text edits it in a box (textedit.go), ctrl+s
+// saves, esc cancels. Nothing is written until ctrl+s.
 
 type fieldKind int
 
 const (
 	fText   fieldKind = iota // one line you type
 	fChoice                  // one of a few options, ←→
-	fLong                    // long text, edited in your editor
+	fLong                    // long text, edited in a box
 )
 
 type field struct {
@@ -39,7 +38,8 @@ type form struct {
 	fields            []field
 	idx               int
 	err               string
-	extra             any // whatever the kind needs to carry (a skill suggestion, …)
+	extra             any       // whatever the kind needs to carry (a skill suggestion, …)
+	edit              *textEdit // the long text being edited, if any
 }
 
 func (f *form) get(key string) string {
@@ -76,6 +76,9 @@ type editorDoneMsg struct {
 
 // formKey handles a key while a form is open.
 func (m Model) formKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if m.form.edit != nil {
+		return m.editKey(msg)
+	}
 	f := *m.form
 	f.fields = slices.Clone(f.fields)
 	fl := &f.fields[f.idx]
@@ -104,16 +107,22 @@ func (m Model) formKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.form = &f
 			return m.formChanged(fl.key), nil
 		}
-	case "enter", "ctrl+e":
+	case "enter":
 		if f.kind == "pane" { // a menu: enter opens it
 			m.form = &f
 			return m.saveForm()
 		}
 		if fl.kind == fLong {
+			f.startEdit(f.idx)
+			m.form = &f
+			return m, nil
+		}
+		f.idx = min(len(f.fields)-1, f.idx+1)
+	case "ctrl+e":
+		if fl.kind == fLong {
 			m.form = &f
 			return m, openEditor(fl.key, fl.value)
 		}
-		f.idx = min(len(f.fields)-1, f.idx+1)
 	case "backspace":
 		if fl.kind == fText && fl.value != "" {
 			r := []rune(fl.value)
@@ -136,30 +145,6 @@ func (m Model) formKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// openEditor writes the text to a temporary file and opens your editor
-// on it. Bubble Tea gives the terminal to the editor until it closes.
-func openEditor(key, text string) tea.Cmd {
-	tmp, err := os.CreateTemp("", "tubas-*.md")
-	if err != nil {
-		return func() tea.Msg { return editorDoneMsg{key: key, err: err} }
-	}
-	tmp.WriteString(text)
-	tmp.Close()
-	editor := os.Getenv("VISUAL")
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
-	}
-	if editor == "" {
-		editor = "vi"
-		if runtime.GOOS == "windows" {
-			editor = "notepad"
-		}
-	}
-	parts := strings.Fields(editor)
-	cmd := exec.Command(parts[0], append(parts[1:], tmp.Name())...)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg { return editorDoneMsg{key, tmp.Name(), err} })
-}
-
 func (m Model) editorDone(msg editorDoneMsg) Model {
 	if msg.path != "" {
 		defer os.Remove(msg.path)
@@ -172,7 +157,14 @@ func (m Model) editorDone(msg editorDoneMsg) Model {
 	if msg.err != nil {
 		f.err = "editor: " + msg.err.Error()
 	} else if data, err := os.ReadFile(msg.path); err == nil {
-		f.set(msg.key, strings.TrimSpace(strings.ReplaceAll(string(data), "\r\n", "\n")))
+		text := strings.TrimSpace(strings.ReplaceAll(string(data), "\r\n", "\n"))
+		f.set(msg.key, text)
+		if f.edit != nil && f.edit.key == msg.key { // the box shows what the editor wrote
+			e := *f.edit
+			e.text, e.goal = []rune(text), -1
+			e.cur = min(e.cur, len(e.text))
+			f.edit = &e
+		}
 	}
 	m.form = &f
 	return m
@@ -181,6 +173,9 @@ func (m Model) editorDone(msg editorDoneMsg) Model {
 // viewForm draws the open form in h lines.
 func (m Model) viewForm(cw, h int) []string {
 	f := m.form
+	if f.edit != nil {
+		return m.viewEdit(cw, h)
+	}
 	lines := []string{boldStyle.Render(f.title), ""}
 	for i, fl := range f.fields {
 		sel := i == f.idx
@@ -212,7 +207,7 @@ func (m Model) viewForm(cw, h int) []string {
 		case fLong:
 			first, _, _ := strings.Cut(fl.value, "\n")
 			n := strings.Count(fl.value, "\n") + 1
-			value = textStyle.Render(first) + dimStyle.Render(fmt.Sprintf("  · %d lines · enter edits", n))
+			value = textStyle.Render(first) + dimStyle.Render(fmt.Sprintf("  · %d lines · enter or a click edits", n))
 		}
 		// The options come first (they are what you read and click); the
 		// hint gets the room left, shortened, or none.
@@ -246,7 +241,10 @@ func (m Model) viewForm(cw, h int) []string {
 func (m Model) formBottom(cw int) []string {
 	// Save and cancel first: they are the buttons, and the line is cut at
 	// the end when the window is narrow.
-	keys := "ctrl+s save · esc cancel · ↑↓ field · ←→ or a click chooses · enter on a long text opens your editor"
+	keys := "ctrl+s save · esc cancel · ↑↓ field · ←→ or a click chooses · enter edits a long text"
+	if m.form.edit != nil {
+		keys = "esc done · ctrl+s save · arrows move · enter new line · ctrl+e " + filepath.Base(strings.Fields(editorCommand())[0])
+	}
 	return []string{"", faintStyle.Render(strings.Repeat("─", cw)), spread(dimStyle.Render(fit(keys, cw-lipgloss.Width(m.form.file)-2)), faintStyle.Render(m.form.file), cw)}
 }
 

@@ -329,9 +329,7 @@ func (m Model) clickForm(msg tea.MouseMsg, bx, by int) (Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case fLong:
-		if bx >= 18 {
-			return m.formKey(tea.KeyMsg{Type: tea.KeyEnter})
-		}
+		return m.formKey(tea.KeyMsg{Type: tea.KeyEnter})
 	}
 	return m, nil
 }
