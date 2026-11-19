@@ -1001,7 +1001,7 @@ func (m Model) PressKeys(keys ...string) Model {
 		"tab": tea.KeyTab, "enter": tea.KeyEnter, "esc": tea.KeyEsc, "ctrl+r": tea.KeyCtrlR,
 		"up": tea.KeyUp, "down": tea.KeyDown, "backspace": tea.KeyBackspace,
 		"space": tea.KeySpace, "shift+tab": tea.KeyShiftTab,
-		"left": tea.KeyLeft, "right": tea.KeyRight, "home": tea.KeyHome, "end": tea.KeyEnd, "ctrl+home": tea.KeyCtrlHome, "delete": tea.KeyDelete, "ctrl+s": tea.KeyCtrlS, "ctrl+u": tea.KeyCtrlU, "ctrl+n": tea.KeyCtrlN, "ctrl+b": tea.KeyCtrlB, "ctrl+g": tea.KeyCtrlG,
+		"left": tea.KeyLeft, "right": tea.KeyRight, "home": tea.KeyHome, "end": tea.KeyEnd, "ctrl+home": tea.KeyCtrlHome, "delete": tea.KeyDelete, "ctrl+z": tea.KeyCtrlZ, "ctrl+y": tea.KeyCtrlY, "ctrl+s": tea.KeyCtrlS, "ctrl+u": tea.KeyCtrlU, "ctrl+n": tea.KeyCtrlN, "ctrl+b": tea.KeyCtrlB, "ctrl+g": tea.KeyCtrlG,
 	}
 	for _, k := range keys {
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}

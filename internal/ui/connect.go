@@ -389,8 +389,8 @@ var keyPages = map[string]string{
 	"deepseek":   "platform.deepseek.com/api_keys",
 }
 
-// connectHead is the top of the screen, above the list.
-func (m Model) connectHead() []string {
+// connectHead is the top of the screen, above the list, cw wide.
+func (m Model) connectHead(cw int) []string {
 	if !m.connect.first {
 		return []string{boldStyle.Render("connect") + dimStyle.Render(" · where agents' models come from"), ""}
 	}
@@ -398,14 +398,17 @@ func (m Model) connectHead() []string {
 		textStyle.Render("Agents need a model to talk to. Pick a provider and paste its key:"),
 		textStyle.Render("tubas checks it and keeps it on this computer."), ""}
 	if note := m.claudeLoginNote(); note != "" {
-		lines = append(lines, dimStyle.Render(note), "")
+		for _, l := range wrap(note, cw) {
+			lines = append(lines, dimStyle.Render(l))
+		}
+		lines = append(lines, "")
 	}
 	return lines
 }
 
 func (m Model) viewConnect(cw, h int) []string {
 	c := m.connect
-	lines := m.connectHead()
+	lines := m.connectHead(cw)
 	switch c.stage {
 	case connList:
 		lines = append(lines, m.connectRows(cw)...)
@@ -526,7 +529,7 @@ func (m Model) clickConnect(msg tea.MouseMsg, by int) (Model, tea.Cmd) {
 	if c.stage != connList {
 		return m.clickHint(msg)
 	}
-	if i := by - len(m.connectHead()); i >= 0 && i <= c.addRow() {
+	if i := by - len(m.connectHead(m.width-2)); i >= 0 && i <= c.addRow() {
 		c.idx = i
 		m.connect = &c
 		return m.connectPick(c)

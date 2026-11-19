@@ -28,6 +28,45 @@ type textEdit struct {
 	cur  int // the cursor: an index into text
 	top  int // the first row shown
 	goal int // the column ↑↓ keep to (-1: none yet)
+
+	undo, redo []editState // ctrl+z, ctrl+y
+	last       string      // the kind of the last change: a run of typing is one undo
+}
+
+// editState is the text and the cursor, for undo.
+type editState struct {
+	text []rune
+	cur  int
+}
+
+// maxUndo is how many steps back ctrl+z goes.
+const maxUndo = 300
+
+// remember saves the text as it was before a change, for ctrl+z. A run of
+// typing is one step, cut where a new word starts; a run of deletes is
+// one step; anything else (a paste, your editor's text) is a step of its
+// own.
+func (e *textEdit) remember(before editState, kind string) {
+	newWord := kind == "type" && before.cur > 0 && unicode.IsSpace(before.text[before.cur-1]) &&
+		e.cur > before.cur && !unicode.IsSpace(e.text[before.cur])
+	if kind != e.last || kind == "other" || newWord {
+		e.undo = append(slices.Clip(e.undo), before)
+		if len(e.undo) > maxUndo {
+			e.undo = e.undo[len(e.undo)-maxUndo:]
+		}
+	}
+	e.redo, e.last = nil, kind
+}
+
+// step moves the text one state back (from undo) or forward (from redo).
+func (e *textEdit) step(from, to *[]editState) {
+	if len(*from) == 0 {
+		return
+	}
+	*to = append(slices.Clip(*to), editState{e.text, e.cur})
+	s := (*from)[len(*from)-1]
+	*from = slices.Clip((*from)[:len(*from)-1])
+	e.text, e.cur, e.last = slices.Clone(s.text), min(s.cur, len(s.text)), ""
 }
 
 // editRow is one row on screen: text[start:end]. last: the row ends its
@@ -144,8 +183,10 @@ func (m Model) editKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	f := *m.form
 	f.fields = slices.Clone(f.fields)
 	e := *f.edit
+	before := editState{f.edit.text, f.edit.cur} // e.text is a copy: this one stays as it was
 	e.text = slices.Clone(e.text)
 	w, h := m.editSize()
+	kind := "other" // what the change was, for undo
 	rows := editRows(e.text, w)
 	row := rowOf(rows, e.cur)
 	moved := false // ↑↓ keep their column; anything else forgets it
@@ -166,19 +207,29 @@ func (m Model) editKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "ctrl+e":
 		m.form = &f
 		return m, openEditor(e.key, string(e.text))
+	case "ctrl+z":
+		e.step(&e.undo, &e.redo)
+		kind = ""
+	case "ctrl+y", "ctrl+shift+z":
+		e.step(&e.redo, &e.undo)
+		kind = ""
 	case "enter":
 		insert("\n")
+		kind = "type"
 	case "tab":
 		insert("  ")
+		kind = "type"
 	case "backspace":
 		if e.cur > 0 {
 			e.text = slices.Delete(e.text, e.cur-1, e.cur)
 			e.cur--
 		}
+		kind = "delete"
 	case "delete":
 		if e.cur < len(e.text) {
 			e.text = slices.Delete(e.text, e.cur, e.cur+1)
 		}
+		kind = "delete"
 	case "left":
 		e.cur = max(0, e.cur-1)
 	case "right":
@@ -212,9 +263,20 @@ func (m Model) editKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	default:
 		if msg.Type == tea.KeySpace {
 			insert(" ")
+			kind = "type"
 		} else if msg.Type == tea.KeyRunes {
 			insert(editorText(msg))
+			if !msg.Paste {
+				kind = "type"
+			}
 		}
+	}
+	switch {
+	case kind == "": // ctrl+z, ctrl+y
+	case !slices.Equal(before.text, e.text):
+		e.remember(before, kind)
+	case e.cur != before.cur:
+		e.last = "" // moving the cursor ends a run of typing
 	}
 	if !moved {
 		e.goal = -1

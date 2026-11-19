@@ -161,6 +161,9 @@ func (m Model) editorDone(msg editorDoneMsg) Model {
 		f.set(msg.key, text)
 		if f.edit != nil && f.edit.key == msg.key { // the box shows what the editor wrote
 			e := *f.edit
+			if text != string(e.text) {
+				e.remember(editState{e.text, e.cur}, "other") // ctrl+z brings back what was there
+			}
 			e.text, e.goal = []rune(text), -1
 			e.cur = min(e.cur, len(e.text))
 			f.edit = &e
@@ -243,7 +246,7 @@ func (m Model) formBottom(cw int) []string {
 	// the end when the window is narrow.
 	keys := "ctrl+s save · esc cancel · ↑↓ field · ←→ or a click chooses · enter edits a long text"
 	if m.form.edit != nil {
-		keys = "esc done · ctrl+s save · arrows move · enter new line · ctrl+e " + filepath.Base(strings.Fields(editorCommand())[0])
+		keys = "esc done · ctrl+s save · ctrl+z undo · enter new line · ctrl+e " + filepath.Base(strings.Fields(editorCommand())[0])
 	}
 	return []string{"", faintStyle.Render(strings.Repeat("─", cw)), spread(dimStyle.Render(fit(keys, cw-lipgloss.Width(m.form.file)-2)), faintStyle.Render(m.form.file), cw)}
 }

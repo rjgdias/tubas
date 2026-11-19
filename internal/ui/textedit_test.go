@@ -116,3 +116,48 @@ func TestTheBoxScrollsToTheCursor(t *testing.T) {
 		t.Errorf("the wheel scrolls: %d", next.(Model).form.edit.top)
 	}
 }
+
+// ctrl+z takes back a word at a time, a delete run at once, a paste at
+// once; ctrl+y does it again.
+func TestUndoInTheBox(t *testing.T) {
+	m, _ := personalModel(t)
+	m = click(t, m, "3 agents")
+	m = click(t, m, "tubas  assistant")
+	m = click(t, m, "instructions")
+	orig := m.form.get("instructions")
+	m = m.PressKeys("ctrl+home", "Be", "space", "brief", "enter")
+	m = m.PressKeys("backspace", "backspace", "backspace")
+	if got := m.form.get("instructions"); !strings.HasPrefix(got, "Be bri"+"You") {
+		t.Fatalf("typed and deleted: %q", got)
+	}
+	m = m.PressKeys("ctrl+z") // the three backspaces
+	if got := string(m.form.edit.text); !strings.HasPrefix(got, "Be brief\nYou") {
+		t.Fatalf("undo the deletes: %q", got)
+	}
+	m = m.PressKeys("ctrl+z") // "brief" and its new line
+	if got := string(m.form.edit.text); !strings.HasPrefix(got, "Be You") {
+		t.Fatalf("undo a word: %q", got)
+	}
+	m = m.PressKeys("ctrl+z", "ctrl+z", "ctrl+z")
+	if m.form.get("instructions") != orig {
+		t.Fatalf("undo everything: %q", m.form.get("instructions"))
+	}
+	m = m.PressKeys("ctrl+y")
+	if got := string(m.form.edit.text); !strings.HasPrefix(got, "Be ") {
+		t.Fatalf("redo: %q", got)
+	}
+	// A paste is one step.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("one two three"), Paste: true})
+	m = next.(Model).PressKeys("ctrl+z")
+	if got := string(m.form.edit.text); strings.Contains(got, "one") || !strings.HasPrefix(got, "Be ") {
+		t.Fatalf("undo a paste: %q", got)
+	}
+	// What your editor wrote is one step too.
+	path := filepath.Join(t.TempDir(), "edit.md")
+	os.WriteFile(path, []byte("all new"), 0o644)
+	m = m.editorDone(editorDoneMsg{key: "instructions", path: path})
+	m = m.PressKeys("ctrl+z")
+	if got := string(m.form.edit.text); !strings.HasPrefix(got, "Be ") {
+		t.Fatalf("undo the editor: %q", got)
+	}
+}

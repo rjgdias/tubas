@@ -134,3 +134,15 @@ func (m Model) editAgentForTest(t *testing.T, change func(*agent.Agent)) Model {
 	}
 	return m.reloadTeam()
 }
+
+// The note about a Claude Code login is wrapped, never cut, in a narrow
+// window.
+func TestTheLoginNoteWraps(t *testing.T) {
+	m, _ := connectWorld(t)
+	m = feed(m, providersMsg{{Name: "claude-login"}})
+	m = feed(m, tea.WindowSizeMsg{Width: 80, Height: 34})
+	onScreen(t, m, "Your Claude Code login", "another provider works here.")
+	// A click still lands on the row it points at, under the longer head.
+	m = click(t, m, "acme")
+	onScreen(t, m, "Paste acme's key")
+}
